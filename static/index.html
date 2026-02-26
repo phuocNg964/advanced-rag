@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG Chat - Document Intelligence</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>🗂️ Collections</h1>
+            </div>
+
+            <!-- New Collection -->
+            <div class="new-collection">
+                <input type="text" id="newCollectionName" placeholder="Collection name...">
+                <button id="createCollectionBtn" class="btn-primary">+ Create</button>
+            </div>
+
+            <!-- Collections List -->
+            <div class="collections-list" id="collectionsList">
+                <!-- Populated by JS -->
+            </div>
+
+            <!-- Document Upload Section -->
+            <div class="upload-section" id="uploadSection" style="display: none;">
+                <h3>📤 Upload PDF</h3>
+                <div class="upload-area" id="uploadArea">
+                    <input type="file" id="fileInput" accept=".pdf" hidden>
+                    <p>Drop PDF here or <span class="upload-link">browse</span></p>
+                </div>
+
+                <!-- Upload Jobs List -->
+                <div class="jobs-list" id="jobsList">
+                    <!-- Populated by JS -->
+                </div>
+
+                <!-- Documents List -->
+                <div class="documents-section">
+                    <h3>📄 Documents</h3>
+                    <div class="documents-list" id="documentsList">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-container">
+            <div class="chat-header" id="chatHeader">
+                <h2>💬 Select a collection to start chatting</h2>
+            </div>
+
+            <div class="chat-messages" id="chatMessages">
+                <!-- Messages populated by JS -->
+            </div>
+
+            <div class="chat-input-container" id="chatInputContainer" style="display: none;">
+                <textarea id="messageInput" placeholder="Type your message..." rows="1"></textarea>
+                <button id="sendBtn" class="btn-send">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 2L11 13M22 2L15 22L11 13M11 13L2 9L22 2" />
+                    </svg>
+                </button>
+            </div>
+        </main>
+    </div>
+
+    <!-- Citation Tooltip (hidden, positioned dynamically) -->
+    <div class="citation-tooltip" id="citationTooltip">
+        <div class="tooltip-header">
+            <span class="tooltip-source"></span>
+            <span class="tooltip-page"></span>
+        </div>
+        <div class="tooltip-content"></div>
+    </div>
+
+    <!-- Delete Collection Modal -->
+    <div class="modal-overlay" id="deleteModal" style="display: none;">
+        <div class="modal">
+            <h3>Delete Collection?</h3>
+            <p>This will permanently delete <strong id="deleteCollectionName"></strong> and all its documents.</p>
+            <div class="modal-actions">
+                <button class="btn-secondary" id="cancelDeleteBtn">Cancel</button>
+                <button class="btn-danger" id="confirmDeleteBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Document Modal -->
+    <div class="modal-overlay" id="deleteDocModal" style="display: none;">
+        <div class="modal">
+            <h3>Delete Document?</h3>
+            <p>This will permanently delete <strong id="deleteDocumentName"></strong> from the collection.</p>
+            <div class="modal-actions">
+                <button class="btn-secondary" id="cancelDeleteDocBtn">Cancel</button>
+                <button class="btn-danger" id="confirmDeleteDocBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>

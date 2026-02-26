@@ -1,0 +1,29 @@
+# Development & notebook dependencies (not required by src/)
+-r requirements.txt
+
+# OpenAI (for notebooks/eval)
+python-dotenv==1.0.1
+openai==1.54.3
+tiktoken==0.12.0
+
+# Additional LangChain integrations
+langchain-openai==0.2.8
+langchain-community==0.3.7
+langchain-experimental==0.3.3
+langchain-pymupdf4llm
+langchain-weaviate==0.0.3
+langchain-unstructured==0.1.4
+
+# LangGraph postgres checkpoint (if using persistent checkpoints)
+langgraph-checkpoint-postgres==3.0.2
+
+# Embeddings (for notebooks)
+langchain-huggingface==0.1.2
+sentence-transformers==3.3.1
+
+# Database
+SQLAlchemy==2.0.35
+
+# Evaluation framework
+ragas
+litellm
