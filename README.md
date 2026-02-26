@@ -63,7 +63,7 @@ PDF Upload → Partition → Filter → Caption Attachment → Image Summarizati
 How user queries get answered — the agentic RAG pipeline.
 
 <p align="center">
-  <img src="docs/rag_workflow.png" alt="RAG Workflow" width="400">
+  <img src="docs/rag_workflow.png" alt="RAG Workflow" width="200">
   <br>
   <em>LangGraph agentic workflow — query rewriting, retrieval, and generation</em>
 </p>
