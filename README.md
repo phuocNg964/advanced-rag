@@ -4,7 +4,7 @@ A RAG system for chatting with your PDF documents. Upload files, ask questions, 
 
 Built with **LangGraph** (agentic workflow), **Weaviate** (vector database with local embeddings & reranking), **FastAPI** (API), and **Gemini** (LLM).
 
-<!-- TODO: Replace with your own demo -->
+<!-- TODO: Replace with your own demo gif/video -->
 <!-- ![Demo](docs/demo.gif) -->
 
 <p align="center">
@@ -27,85 +27,76 @@ Built with **LangGraph** (agentic workflow), **Weaviate** (vector database with 
 2. **Ask questions** → rewrites your query → hybrid search + reranking → generates answer with citations
 3. **Multimodal** → images/tables are captioned by LLM and included as visual context during generation
 
-## Document Ingestion Pipeline
+---
+
+## 1. Ingestion Pipeline
+
+How documents go from raw PDF to searchable chunks in Weaviate.
 
 <!-- TODO: Replace with your ingestion process screenshot or diagram -->
 <p align="center">
   <img src="docs/ingestion_pipeline.png" alt="Ingestion Pipeline" width="700">
   <br>
-  <em>Document ingestion pipeline — PDF parsing, image summarization, and chunking</em>
+  <em>Document ingestion — PDF extraction, image summarization, chunking, and storage</em>
 </p>
 
 ```
-PDF Upload
-    ↓
-Partition (unstructured, hi_res strategy)
-    • Extracts text, images, and tables from PDF
-    • Saves images/tables as separate files (150 DPI)
-    • OCR on individual blocks (not full-page)
-    ↓
-Filter & Clean
-    • Removes headers, uncategorized text, tiny elements
-    • Discards images < 10KB (logos, icons, etc.)
-    ↓
-Caption Attachment
-    • Links nearby captions to their images/tables
-    • Removes standalone caption elements to avoid duplicates
-    ↓
-Image Summarization (parallel, 5 workers)
-    • Sends each image + its caption to Gemini vision
-    • Generates information-dense text summary for vector search
-    • Runs in ThreadPoolExecutor for speed on image-heavy PDFs
-    ↓
-Two-Stage Chunking
-    • Stage 1: chunk_by_title (groups text under headings, max 10K chars)
-    • Stage 2: RecursiveCharacterTextSplitter (1500 chars, no overlap)
-    • Images/tables kept as single chunks with their summaries
-    ↓
-Store in Weaviate
-    • Batch insert with content-based UUID (deduplication)
-    • Metadata: source, page number, type, caption, image path
+PDF Upload → Partition → Filter → Caption Attachment → Image Summarization → Chunking → Store
 ```
 
-Each chunk is stored with its type (`Text`, `Image`, `Table`), so the generator knows when to include visual context during answer generation.
+### Key Techniques
 
-## How the Pipeline Works
+**Multimodal PDF Extraction** — uses `unstructured` with `hi_res` strategy to extract text, images, and tables as separate typed elements. Images/tables are saved as files (150 DPI). OCR runs on individual blocks only (not full-page) to avoid redundant processing.
 
-<!-- TODO: Replace with your workflow diagram (e.g. LangGraph visualization or hand-drawn diagram) -->
+**Intelligent Filtering** — removes noise (headers, uncategorized text, elements ≤ 2 chars) and discards insignificant images < 10KB (logos, icons, decorative elements) to keep the index clean.
+
+**Caption Attachment** — custom logic to link captions to their images/tables using document order and direction conventions (image captions appear below, table captions appear above). Matched caption elements are removed to avoid duplicate content in the index. Regex-based detection handles variations like `Figure 1:`, `Table A.1:`, `Fig. 3:`.
+
+**Parallel Image Summarization** — each image + its caption is sent to Gemini vision to generate an information-dense text summary optimized for vector search. Runs in `ThreadPoolExecutor` (5 workers) for speed on image-heavy PDFs.
+
+**Two-Stage Chunking** — first groups text by title/heading structure (`chunk_by_title`, max 10K chars), then splits further with `RecursiveCharacterTextSplitter` (1500 chars). Image/table chunks are kept intact with their summaries. This preserves semantic coherence within headings while keeping chunks retrieval-friendly.
+
+---
+
+## 2. Retrieval & Generation
+
+How user queries get answered — the agentic RAG pipeline.
+
+<!-- TODO: Replace with your RAG workflow diagram (e.g. LangGraph visualization) -->
 <!-- ![RAG Workflow](docs/rag_workflow.png) -->
 
-```
-User Query
-    ↓
-Query Rewriter (Gemini Flash)
-    • Resolves pronouns from chat history
-    • Fixes typos, strips filler
-    • Splits into 1–3 sub-queries if needed
-    ↓
-Hybrid Search (per sub-query)
-    • BM25 + Vector search (α=0.5)
-    • Cross-encoder reranking (top 25 → top 7)
-    • Deduplicate across sub-queries
-    ↓
-Generator (Gemini Flash)
-    • Synthesizes answer from retrieved docs
-    • Includes images as base64 for vision context
-    • Adds inline [1][2] citations
-    ↓
-Response with Source Citations
-```
+
+### Key Techniques
+
+**Agentic Workflow (LangGraph)** — the pipeline is a 3-node state graph (`query_rewriter → retriever → generator`) compiled with a checkpointer for conversation memory. Each request passes through all nodes with shared state, keeping the architecture modular and testable.
+
+**Query Preprocessing** — a dedicated small/fast model (`gemini-2.0-flash`) rewrites raw user input before retrieval:
+- Resolves pronouns using the last 3 turns of chat history
+- Fixes typos and strips filler phrases
+- Decomposes complex queries into 1–3 orthogonal sub-queries (e.g., "Compare A and B" → two separate searches)
+- Output is a strict JSON array — parsed with regex fallback for robustness
+
+**Hybrid Search** — combines BM25 keyword matching + vector similarity (α=0.5) for each sub-query. This catches both exact term matches and semantic similarity, which neither approach achieves alone.
+
+**Cross-Encoder Reranking** — initial candidates (top 25) are reranked by a cross-encoder model (`ms-marco-MiniLM-L-6-v2`, runs locally in Docker) down to top 7. This two-stage approach balances recall (wide initial net) with precision (reranker filters noise).
+
+**Multimodal Generation** — the generator sends image/table chunks as base64-encoded images alongside text to Gemini, enabling vision-aware answers. The prompt enforces inline `[1][2]` citations with source attribution.
+
+**Conversation Memory** — `InMemorySaver` checkpointer preserves chat history per session, so follow-up questions resolve correctly (e.g., "tell me more about it" → resolves "it" from context).
+
+---
 
 ## Tech Stack
 
 | Component | Technology |
 |---|---|
-| Agentic workflow | LangGraph (3-node graph: rewriter → retriever → generator) |
+| Agentic workflow | LangGraph (3-node state graph with checkpointer) |
 | Vector database | Weaviate (self-hosted via Docker) |
-| Embeddings | `google-gemma-3-300m-embedding` (runs locally in Docker) |
-| Reranker | `cross-encoder-ms-marco-MiniLM-L-6-v2` (runs locally in Docker) |
-| LLM | Gemini 2.0 Flash (query rewriting) + Gemini 2.5 Flash Lite (generation) |
-| PDF processing | Unstructured (text/image/table extraction) |
-| API | FastAPI |
+| Embeddings | `google-gemma-3-300m-embedding` (local, Docker) |
+| Reranker | `cross-encoder-ms-marco-MiniLM-L-6-v2` (local, Docker) |
+| LLM | Gemini 2.0 Flash (rewriting) + Gemini 2.5 Flash Lite (generation) |
+| PDF processing | Unstructured (hi-res extraction) |
+| API | FastAPI (async, background jobs) |
 | Frontend | Vanilla HTML/CSS/JS |
 
 ## Project Structure
@@ -118,7 +109,7 @@ Response with Source Citations
 │   ├── api.py                # FastAPI endpoints
 │   ├── collection_service.py # Weaviate collection CRUD
 │   ├── config.py             # Settings (pydantic-settings)
-│   ├── utils.py              # Helpers (base64 encoding, formatters)
+│   ├── utils.py              # Caption attachment, base64 encoding
 │   └── logging_config.py     # Logging
 ├── static/                   # Chat UI (index.html, style.css, app.js)
 ├── notebooks/                # Experiments & evaluation (see notebooks/README.md)
