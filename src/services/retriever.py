@@ -1,8 +1,8 @@
 import weaviate
 from weaviate.classes.query import Rerank, Filter, MetadataQuery
 from typing import List, Optional
-from src.logging_config import get_logger
-from src.config import get_settings
+from src.core.logger import get_logger
+from src.core.config import get_settings
 
 logger = get_logger(__name__)
 

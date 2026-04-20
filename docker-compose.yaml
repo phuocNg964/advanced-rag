@@ -48,3 +48,38 @@ services:
     image: cr.weaviate.io/semitechnologies/transformers-inference:google-gemma-3-300m-embedding-1.13.2
     environment:
       ENABLE_CUDA: '0'
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres    # Match your config
+      POSTGRES_PASSWORD: phuoc123 # Match your config
+      POSTGRES_DB: agentic-rag    # Match your config
+    ports:
+      - "5432:5432"              # Standard internal port
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+
+  api:
+    build: . # build image locally by Dockerfile in current dir (.) 
+    ports:
+      - "8000:8000" # map host port to container port
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '4.0'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - weaviate
+      - postgres
+
+

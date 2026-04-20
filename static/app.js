@@ -107,6 +107,56 @@ const API = {
             body: JSON.stringify({ message, session_id: sessionId })
         });
         return res.json();
+    },
+
+    async streamChat(collectionName, message, sessionId, onDocs, onToken, onComplete, onError) {
+        try {
+            const response = await fetch(`/collections/${collectionName}/chat/stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message, session_id: sessionId })
+            });
+
+            if (!response.ok) throw new Error("HTTP " + response.status);
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            let buffer = "";
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop();
+                
+                for (const part of parts) {
+                    if (part.startsWith('data: ')) {
+                        const jsonStr = part.substring(6);
+                        if (!jsonStr) continue;
+                        
+                        try {
+                            const data = JSON.parse(jsonStr);
+                            if (data.type === 'docs') {
+                                onDocs(data.documents);
+                            } else if (data.type === 'chunk') {
+                                onToken(data.text);
+                            } else if (data.type === 'error') {
+                                onError(data.message);
+                            } else if (data.type === 'done') {
+                                onComplete();
+                            }
+                        } catch (e) {
+                            console.error("Failed to parse chunk", e, part);
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            onError(err.message);
+        }
     }
 };
 
@@ -389,26 +439,49 @@ async function sendMessage() {
 
     try {
         elements.sendBtn.disabled = true;
-        const response = await API.chat(state.activeCollection, message, state.sessionId);
-
-        // Calculate response time
-        const endTime = performance.now();
-        const responseTime = ((endTime - startTime) / 1000).toFixed(2);
-
-        // Remove loading
-        document.getElementById(loadingId)?.remove();
-
-        // Store retrieved docs for citations
-        state.retrievedDocs = response.retrieved_documents || [];
-
-        // Add assistant message with response time
-        state.messages.push({
+        
+        // Prepare the assistant message in state
+        const assistantMsg = {
             role: 'assistant',
-            content: response.response,
-            docs: state.retrievedDocs,
-            responseTime: responseTime
-        });
-        renderMessages();
+            content: '',
+            docs: [],
+            responseTime: null
+        };
+        state.messages.push(assistantMsg);
+        
+        let docsReceived = false;
+
+        await API.streamChat(
+            state.activeCollection, 
+            message, 
+            state.sessionId,
+            (docs) => {
+                document.getElementById(loadingId)?.remove();
+                assistantMsg.docs = docs;
+                state.retrievedDocs = docs;
+                docsReceived = true;
+                renderMessages();
+            },
+            (token) => {
+                if (!docsReceived) {
+                    document.getElementById(loadingId)?.remove();
+                    docsReceived = true;
+                }
+                assistantMsg.content += token;
+                renderMessages();
+            },
+            () => {
+                const endTime = performance.now();
+                assistantMsg.responseTime = ((endTime - startTime) / 1000).toFixed(2);
+                renderMessages();
+            },
+            (errMsg) => {
+                console.error('Chat error:', errMsg);
+                document.getElementById(loadingId)?.remove();
+                assistantMsg.content += '\n\n[Error: ' + errMsg + ']';
+                renderMessages();
+            }
+        );
     } catch (err) {
         console.error('Chat failed:', err);
         document.getElementById(loadingId)?.remove();

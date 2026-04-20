@@ -4,8 +4,8 @@ from pathlib import Path
 from weaviate.classes.config import Configure, Property, DataType
 from typing import Optional
 from weaviate.classes.query import Filter
-from src.logging_config import get_logger
-from src.config import Settings, get_settings
+from src.core.logger import get_logger
+from src.core.config import Settings, get_settings
 
 logger = get_logger(__name__)
 
@@ -104,7 +104,7 @@ class CollectionService:
             collection = self.client.collections.get(collection_name)
 
             collection.data.delete_many(
-                where=Filter.by_property('source').like(f"*{file_document}*")
+                where=Filter.by_property('source').equal(f"{collection_name}/{file_document}")
             )
             logger.info(f"Document '{file_document}' deleted from collection")
             
