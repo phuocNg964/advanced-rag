@@ -1,0 +1,49 @@
+# Git
+.git
+.gitignore
+
+# Virtual Environment
+.venv/
+.rag/
+venv/
+ENV/
+env/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Database
+postgres_data/
+
+# Environment Variables
+.env
+.env.*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project Specific
+my_notes/
+tmp/
+collections/
+data/
+
+# Model Cache
+.cache/
+models/
+
+# Logs
+*.log
+logs/

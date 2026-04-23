@@ -17,7 +17,12 @@ const state = {
 };
 
 function generateSessionId() {
-    return 'session_' + Math.random().toString(36).substring(2, 15);
+    let sid = localStorage.getItem('rag_session_id');
+    if (!sid) {
+        sid = 'session_' + Math.random().toString(36).substring(2, 15);
+        localStorage.setItem('rag_session_id', sid);
+    }
+    return sid;
 }
 
 // ===========================
@@ -64,6 +69,20 @@ const API = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name })
         });
+        
+        if (!res.ok) {
+            let errorMsg = `HTTP Error ${res.status}`;
+            try {
+                const data = await res.json();
+                // FastAPI default validation error format
+                if (data.detail && Array.isArray(data.detail)) {
+                    errorMsg = data.detail.map(e => e.msg || e.description || JSON.stringify(e)).join(', ');
+                } else if (data.detail) {
+                    errorMsg = data.detail;
+                }
+            } catch (e) {}
+            throw new Error(errorMsg);
+        }
         return res.json();
     },
 
@@ -96,7 +115,7 @@ const API = {
     },
 
     async getJobStatus(jobId) {
-        const res = await fetch(`/jobs/${jobId}`);
+        const res = await fetch(`/collections/jobs/${jobId}`);
         return res.json();
     },
 
@@ -236,6 +255,13 @@ async function createCollection() {
     const name = elements.newCollectionName.value.trim();
     if (!name) return;
 
+    // Weaviate strict naming rule validation
+    const validPattern = /^[A-Z][a-zA-Z0-9_]*$/;
+    if (!validPattern.test(name)) {
+        alert("Invalid Name!\n\nCollection names MUST:\n1. Start with a Capital Letter\n2. Contain only letters, numbers, and underscores (_)\n3. Avoid spaces and hyphens (-)");
+        return;
+    }
+
     try {
         await API.createCollection(name);
         elements.newCollectionName.value = '';
@@ -243,6 +269,7 @@ async function createCollection() {
         selectCollection(name);
     } catch (err) {
         console.error('Failed to create collection:', err);
+        alert(`Failed to create collection:\n\n${err.message}`);
     }
 }
 
@@ -365,7 +392,9 @@ function renderJobs() {
         return;
     }
 
-    elements.jobsList.innerHTML = jobEntries.map(([id, job]) => {
+    jobEntries.forEach(([id, job]) => {
+        let jobEl = elements.jobsList.querySelector(`.job-item[data-id="${id}"]`);
+        
         let statusIcon = '';
         let statusClass = '';
         switch (job.status) {
@@ -383,13 +412,25 @@ function renderJobs() {
                 statusClass = 'status-failed';
                 break;
         }
-        return `
-            <div class="job-item" data-id="${id}">
+
+        if (!jobEl) {
+            const item = document.createElement('div');
+            item.className = 'job-item';
+            item.setAttribute('data-id', id);
+            item.innerHTML = `
                 <span class="filename">${job.filename}</span>
                 <span class="status ${statusClass}">${statusIcon}</span>
-            </div>
-        `;
-    }).join('');
+            `;
+            elements.jobsList.appendChild(item);
+        } else {
+            const statusSpan = jobEl.querySelector('.status');
+            // Only update if status class changed to avoid restarting animation
+            if (!statusSpan.classList.contains(statusClass)) {
+                statusSpan.className = `status ${statusClass}`;
+                statusSpan.innerHTML = statusIcon;
+            }
+        }
+    });
 }
 
 async function pollJobStatus(jobId) {

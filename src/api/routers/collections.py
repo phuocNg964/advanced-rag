@@ -7,14 +7,20 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 class CollectionCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
+    name: str = Field(
+        ..., 
+        min_length=1, 
+        max_length=100,
+        pattern=r"^[A-Z][a-zA-Z0-9_]*$",
+        description="Weaviate collection names must start with a capital letter and contain only alphanumeric characters and underscores."
+    )
 
 @router.post("")
 async def create_collection(request: CollectionCreate):
     """Create a new Weaviate collection."""
     try:
-        with CollectionService() as service:
-            message = service.create(request.name)
+        service = CollectionService()
+        message = service.create(request.name)
         return {"message": message}
     except Exception as e:
         logger.error(f"Failed to create collection: {e}")
@@ -24,8 +30,8 @@ async def create_collection(request: CollectionCreate):
 async def delete_collection(name: str):
     """Delete a Weaviate collection."""
     try:
-        with CollectionService() as service:
-            message = service.delete_collection(name)
+        service = CollectionService()
+        message = service.delete_collection(name)
         return {"message": message}
     except Exception as e:
         logger.error(f"Failed to delete collection: {e}")
@@ -35,8 +41,8 @@ async def delete_collection(name: str):
 async def list_collections():
     """List all Weaviate collections."""
     try:
-        with CollectionService() as service:
-            collections = service.get_all_collections()
+        service = CollectionService()
+        collections = service.get_all_collections()
         return {"collections": list(collections.keys())}
     except Exception as e:
         logger.error(f"Failed to list collections: {e}")
@@ -46,8 +52,8 @@ async def list_collections():
 async def list_documents(collection_name: str):
     """List all documents in a collection."""
     try:
-        with CollectionService() as service:
-            documents = service.get_documents(collection_name)
+        service = CollectionService()
+        documents = service.get_documents(collection_name)
         return {"documents": documents}
     except Exception as e:
         logger.error(f"Failed to list documents: {e}")
@@ -57,8 +63,8 @@ async def list_documents(collection_name: str):
 async def delete_document(collection_name: str, document_name: str):
     """Delete a document from a collection."""
     try:
-        with CollectionService() as service:
-            message = service.delete_document(collection_name, document_name)
+        service = CollectionService()
+        message = service.delete_document(collection_name, document_name)
         return {"message": message}
     except Exception as e:
         logger.error(f"Failed to delete document: {e}")

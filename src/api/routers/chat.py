@@ -98,9 +98,12 @@ async def stream_chat_with_collection(name: str, request: ChatRequest):
                     yield f"data: {json.dumps({'type': 'docs', 'documents': formatted_docs})}\n\n"
 
                 elif kind == "on_chat_model_stream":
-                    chunk_content = event['data']['chunk'].content
-                    if chunk_content:
-                        yield f"data: {json.dumps({'type': 'chunk', 'text': chunk_content})}\n\n"
+                    # Only stream tokens from the final generation nodes (not router/rewriter)
+                    node_name = event.get("metadata", {}).get("langgraph_node")
+                    if node_name in ("rag_generator", "general_llm"):
+                        chunk_content = event['data']['chunk'].content
+                        if chunk_content:
+                            yield f"data: {json.dumps({'type': 'chunk', 'text': chunk_content})}\n\n"
 
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 

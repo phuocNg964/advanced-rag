@@ -17,13 +17,16 @@ class Settings(BaseSettings):
         extra="ignore"
     )
     
+    # LLM Provider Configuration
+    llm_provider: str = Field(default="gemini", description="Choose between 'gemini', 'openai', or 'local'")
+    
     # API Keys
     gemini_api_key: str | None = None  # Make gemini optional if using local
     openai_api_key: str | None = None
     unstructured_api_key: str | None = None
     
     # Local LLM (Ollama)
-    use_local_llm: bool = False
+    use_local_llm: bool = False # Legacy: prefer using llm_provider='local'
     ollama_host: str = "http://host.docker.internal:11434" # Default for Docker Desktop to reach host machine
     ollama_model: str = "qwen2.5:7b"
     

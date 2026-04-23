@@ -1,12 +1,13 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional
+from pdfminer.pdfpage import PDFPage
 
 import weaviate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from src.core.llm_factory import get_llm
 from unstructured.chunking.title import chunk_by_title
 from unstructured.partition.pdf import partition_pdf
 from weaviate.util import generate_uuid5
@@ -28,18 +29,7 @@ class IngestService:
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
         self._client: Optional[weaviate.WeaviateClient] = None
-        if self.settings.use_local_llm:
-            self._summarizer_llm = ChatOllama(
-                model=self.settings.ollama_model,
-                base_url=self.settings.ollama_host,
-                temperature=0.3
-            )
-        else:
-            self._summarizer_llm = ChatGoogleGenerativeAI(
-                model="gemini-2.0-flash-lite",
-                temperature=0.3,
-                google_api_key=self.settings.gemini_api_key
-            )
+        self._summarizer_llm = get_llm(model_size="small", temperature=0.3)
 
     def __enter__(self):
         """Context manager entry."""
@@ -69,10 +59,7 @@ class IngestService:
     def _summarize_image(self, chunk: dict) -> dict:
         """Summarize an image chunk using LLM vision."""
         try:
-
             caption = chunk['metadata']['caption']
-
-
             system_message = SystemMessage(content=f"""You are a document analyst preparing content for a semantic search index.
 
     You are given:
@@ -91,7 +78,6 @@ class IngestService:
     - Write in plain, factual sentences. Do NOT use bullet points or markdown formatting.
     - Do NOT say "the image shows" or "this figure illustrates" — just state the information directly.
     - Keep the summary between 2-5 sentences, prioritizing information density over length.""")
-
             # Process image to base64
             img_path = chunk['metadata']['image_path']
             img_base64 = to_base64(img_path)
@@ -103,22 +89,17 @@ class IngestService:
                 "type": "image_url",
                 "image_url": {"url": f"data:image/png;base64,{img_base64}"}
             }]
-            
+
             # Create messages and invoke LLM
             human_message = HumanMessage(content=content)
             response = self._summarizer_llm.invoke([system_message, human_message])
-
             summary = response.content.strip()
             chunk['text'] = f"{caption}\n\n{summary}"
-            
             logger.info(f"Generated summary for image: {img_path}")
-
             return chunk 
-
         except Exception as e:
             logger.error(f"Error generating summaries: {e}")
             raise e
-
 
     def preprocess_documents(self, file_name: str, collection_name: str):
         try:
@@ -130,7 +111,6 @@ class IngestService:
 
             # OOM Protection: Count pages quickly using pdfminer
             try:
-                from pdfminer.pdfpage import PDFPage
                 with open(file_path, 'rb') as f:
                     # check_extractable=False ignores DRM restrictions for just counting pages
                     page_count = sum(1 for _ in PDFPage.get_pages(f, check_extractable=False))
@@ -192,10 +172,10 @@ class IngestService:
                 else:
                     text_elements.append(ele)
             
-            # Summarize images in parallel (major speedup for image-heavy PDFs)
             if image_chunks:
                 logger.info(f"Summarizing {len(image_chunks)} images in parallel...")
-                workers = 1 if self.settings.use_local_llm else 5
+                # Rate limit to 2 workers to avoid crushing Gemini 15 RPM limit. OpenAI can handle 5.
+                workers = 1 if (self.settings.use_local_llm or self.settings.llm_provider == "local") else (5 if self.settings.llm_provider == "openai" else 2)
                 with ThreadPoolExecutor(max_workers=workers) as pool:
                     futures = {pool.submit(self._summarize_image, chunk): chunk for chunk in image_chunks}
                     for future in as_completed(futures):

@@ -9,38 +9,19 @@ from src.core.config import Settings, get_settings
 
 logger = get_logger(__name__)
 
+from src.core.weaviate_client import get_weaviate_client
 
 class CollectionService:
     """Service for managing Weaviate collections."""
 
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
-        self.client: Optional[weaviate.WeaviateClient] = None
-
-    def __enter__(self):
-        """Context manager entry - returns self for use in 'with' block."""
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit - ensures cleanup on block exit."""
-        self.close()
-        return False
-
-    def _get_client(self) -> weaviate.WeaviateClient:
-        """Get or create Weaviate client using config settings."""
-        if self.client is None or not self.client.is_connected():
-            self.client = weaviate.connect_to_local(
-                host=self.settings.weaviate_host,
-                port=self.settings.weaviate_http_port,
-                grpc_port=self.settings.weaviate_grpc_port
-            )
-        return self.client
-
+        # Fetch the centrally managed instance
+        self.client = get_weaviate_client()
 
     def create(self, collection_name: str):
         """Create a new Weaviate collection with standard RAG properties."""
         try:
-            self._get_client()
             if self.client.collections.exists(collection_name):
                 logger.info(f"Collection '{collection_name}' already exists")
                 return 'Collection already exists'
@@ -59,7 +40,6 @@ class CollectionService:
                     Property(name='page_number', data_type=DataType.INT, skip_vectorization=True),
                 ]
             )
-            
             # Create collection folders
             raw_dir = self.settings.base_dir / "data" / "raw" / collection_name
             processed_dir = self.settings.base_dir / "data" / "processed" / collection_name
@@ -73,10 +53,9 @@ class CollectionService:
             logger.error(f"Failed to create collection: {e}")
             return 'Failed to create collection'
 
-
     def delete_collection(self, collection_name: str):
         """Delete a Weaviate collection and its data folders."""
-        self._get_client()
+
 
         if not self.client.collections.exists(collection_name):
             logger.info(f"Collection '{collection_name}' does not exist")
@@ -95,12 +74,9 @@ class CollectionService:
         logger.info(f"Collection '{collection_name}' deleted successfully")
         return 'Collection deleted successfully'
 
-
     def delete_document(self, collection_name: str, file_document: str):
         """Delete a document's vectors from the collection and its files from disk."""
         try:
-            self._get_client()
-            
             collection = self.client.collections.get(collection_name)
 
             collection.data.delete_many(
@@ -149,9 +125,5 @@ class CollectionService:
 
     def get_all_collections(self):
         """List all Weaviate collections."""
-        self._get_client()
         return self.client.collections.list_all()
 
-    def close(self):
-        if self.client:
-            self.client.close()

@@ -53,8 +53,8 @@ async def run_ingestion_job_async(job_id: str, file_path: Path, collection_name:
         
         # Rollback: purge partially inserted chunks and cleanly remove the file so user can try again
         try:
-            with CollectionService() as coll_service:
-                coll_service.delete_document(collection_name, file_path.name)
+            coll_service = CollectionService()
+            coll_service.delete_document(collection_name, file_path.name)
             logger.info(f"Rollback complete for {file_path.name}")
         except Exception as rollback_e:
             logger.error(f"Rollback failed for {file_path.name}: {rollback_e}")
@@ -87,8 +87,8 @@ async def upload_document(
     
     try:
         # Pre-cleanup: Prevent the "Duplicate Chunk" bug by deleting previous vectors/files safely
-        with CollectionService() as coll_service:
-            coll_service.delete_document(name, file.filename)
+        coll_service = CollectionService()
+        coll_service.delete_document(name, file.filename)
             
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)

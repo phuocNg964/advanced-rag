@@ -64,8 +64,14 @@ services:
     build: . # build image locally by Dockerfile in current dir (.) 
     ports:
       - "8000:8000" # map host port to container port
+    profiles:
+      - production
     env_file:
       - .env
+    environment:
+      - ENVIRONMENT=production
+      - PG_HOST=postgres
+      - WEAVIATE_HOST=weaviate
     volumes:
       - ./data:/app/data
     deploy:
