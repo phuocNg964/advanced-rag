@@ -165,7 +165,7 @@ const API = {
                             } else if (data.type === 'error') {
                                 onError(data.message);
                             } else if (data.type === 'done') {
-                                onComplete();
+                                onComplete(data);
                             }
                         } catch (e) {
                             console.error("Failed to parse chunk", e, part);
@@ -511,9 +511,10 @@ async function sendMessage() {
                 assistantMsg.content += token;
                 renderMessages();
             },
-            () => {
+            (data) => {
                 const endTime = performance.now();
                 assistantMsg.responseTime = ((endTime - startTime) / 1000).toFixed(2);
+                assistantMsg.traceId = data?.trace_id || null;
                 renderMessages();
             },
             (errMsg) => {
@@ -559,7 +560,12 @@ function renderMessages() {
             }
             // Add response time if available
             if (msg.responseTime) {
-                responseTimeHtml = `<div class="response-time">⏱️ ${msg.responseTime}s</div>`;
+                let traceBtn = '';
+                if (msg.traceId) {
+                    traceBtn = `<button class="trace-btn" data-trace-id="${msg.traceId}"
+                        title="Copy trace ID & open Phoenix">🔍</button>`;
+                }
+                responseTimeHtml = `<div class="response-time">⏱️ ${msg.responseTime}s${traceBtn}</div>`;
             }
         } else {
             // For user messages: escape HTML for safety
@@ -577,6 +583,18 @@ function renderMessages() {
 
     // Render LaTeX math in chat messages
     renderLatex();
+
+    // Add trace button handlers
+    document.querySelectorAll('.trace-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const traceId = btn.dataset.traceId;
+            navigator.clipboard.writeText(traceId);
+            window.open('http://localhost:6006', '_blank');
+            btn.textContent = '✅';
+            setTimeout(() => { btn.textContent = '🔍'; }, 2000);
+        });
+    });
 
     scrollToBottom();
 }

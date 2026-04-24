@@ -35,3 +35,9 @@ grpcio==1.71.2
 grpcio-tools==1.71.2
 requests==2.32.5
 tqdm==4.67.1
+
+# Observability (Phoenix Tracing)
+arize-phoenix-otel
+openinference-instrumentation-langchain
+opentelemetry-api
+opentelemetry-instrumentation-weaviate

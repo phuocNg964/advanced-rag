@@ -8,6 +8,7 @@ from src.agent.workflow import AgenticRAG
 from src.core.weaviate_client import init_weaviate, close_weaviate
 
 from src.api.routers import collections, documents, chat
+from src.core.telemetry import init_tracing
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -22,6 +23,10 @@ chat.rag = rag
 async def lifespan(app: FastAPI):
     """Manage application lifecycle."""
     setup_logging()
+    
+    # Initialize Phoenix tracing (must happen before LangChain imports execute)
+    init_tracing()
+    
     logger.info("Starting RAG API server")
     
     # Initialize Persistent RAG

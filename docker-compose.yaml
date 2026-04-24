@@ -60,6 +60,16 @@ services:
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
 
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    ports:
+      - "6006:6006"   # Web UI + HTTP OTLP collector
+      - "4317:4317"   # gRPC OTLP collector
+    environment:
+      - PHOENIX_WORKING_DIR=/mnt/data
+    volumes:
+      - phoenix_data:/mnt/data
+      
   api:
     build: . # build image locally by Dockerfile in current dir (.) 
     ports:
@@ -72,6 +82,7 @@ services:
       - ENVIRONMENT=production
       - PG_HOST=postgres
       - WEAVIATE_HOST=weaviate
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:4317
     volumes:
       - ./data:/app/data
     deploy:
@@ -87,5 +98,8 @@ services:
     depends_on:
       - weaviate
       - postgres
+      - phoenix
 
-
+volumes:
+  phoenix_data:
+    driver: local

@@ -1,10 +1,12 @@
 import weaviate
 from weaviate.classes.query import Rerank, Filter, MetadataQuery
 from typing import List, Optional
+from opentelemetry import trace
 from src.core.logger import get_logger
 from src.core.config import get_settings
 
 logger = get_logger(__name__)
+tracer = trace.get_tracer(__name__)
 
 def retrieve(
     query: str,
@@ -30,45 +32,56 @@ def retrieve(
     Returns:
         List of retrieved document objects, or [] on error
     """
-    owns_client = client is None
-    try:
-        if owns_client:
-            settings = get_settings()
-            client = weaviate.connect_to_local(
-                host=settings.weaviate_host,
-                port=settings.weaviate_http_port, 
-                grpc_port=settings.weaviate_grpc_port
-            )
-            
-        collection = client.collections.get(collection_name)
-        
-        # Metadata filtering 
-        search_filter = None
-        if metadata:
-            filter_list = [Filter.by_property(key).contains_any([value]) for key, value in metadata.items()]
-            search_filter = Filter.any_of(filter_list)
-        
-        # Hybrid search
-        results = collection.query.hybrid(
-            query=query,
-            filters=search_filter,
-            alpha=alpha,
-            limit=top_k,
-            rerank=Rerank(
-                prop='text',
-                query=query
-            ) if top_k_reranker else None,
-            return_metadata=MetadataQuery(score=True, distance=True),
-        )
-        final_results = results.objects[:top_k_reranker] if top_k_reranker else results.objects
+    with tracer.start_as_current_span("retriever.hybrid_search") as span:
+        span.set_attribute("retriever.query", query)
+        span.set_attribute("retriever.top_k", top_k)
+        span.set_attribute("retriever.alpha", alpha)
+        span.set_attribute("retriever.top_k_reranker", top_k_reranker)
 
-        logger.info(f"Retrieved {len(final_results)} results successfully")
-        return final_results
-    
-    except Exception as e:
-        logger.error(f"Retrieval failed: {e}")
-        return []
-    
-    finally:
-        if owns_client and client is not None:
-            client.close()
+        owns_client = client is None
+        try:
+            if owns_client:
+                settings = get_settings()
+                client = weaviate.connect_to_local(
+                    host=settings.weaviate_host,
+                    port=settings.weaviate_http_port, 
+                    grpc_port=settings.weaviate_grpc_port
+                )
+                
+            collection = client.collections.get(collection_name)
+            
+            # Metadata filtering 
+            search_filter = None
+            if metadata:
+                filter_list = [Filter.by_property(key).contains_any([value]) for key, value in metadata.items()]
+                search_filter = Filter.any_of(filter_list)
+            
+            # Hybrid search
+            results = collection.query.hybrid(
+                query=query,
+                filters=search_filter,
+                alpha=alpha,
+                limit=top_k,
+                rerank=Rerank(
+                    prop='text',
+                    query=query
+                ) if top_k_reranker else None,
+                return_metadata=MetadataQuery(score=True, distance=True),
+            )
+            final_results = results.objects[:top_k_reranker] if top_k_reranker else results.objects
+
+            # Record retrieval outcome
+            span.set_attribute("retriever.results_count", len(final_results))
+
+            logger.info(f"Retrieved {len(final_results)} results successfully")
+            return final_results
+        
+        except Exception as e:
+            span.set_attribute("retriever.error", str(e))
+            span.record_exception(e)
+            logger.error(f"Retrieval failed: {e}")
+            return []
+        
+        finally:
+            if owns_client and client is not None:
+                client.close()

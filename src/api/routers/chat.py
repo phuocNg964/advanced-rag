@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.core.logger import get_logger
+from src.core.telemetry import get_current_trace_id
 
 logger = get_logger(__name__)
 
@@ -82,6 +83,9 @@ async def stream_chat_with_collection(name: str, request: ChatRequest):
 
     async def event_generator():
         try:
+            # Capture trace_id once the OTel span is active
+            trace_id = None
+
             async for event in rag.graph.astream_events(
                 {
                     "query": request.message,
@@ -90,6 +94,10 @@ async def stream_chat_with_collection(name: str, request: ChatRequest):
                 config=config,
                 version='v2'
             ):
+                # Grab trace_id from the first event (span context is now active)
+                if trace_id is None:
+                    trace_id = get_current_trace_id()
+
                 kind = event['event']
 
                 if kind == "on_chain_end" and event["name"] == "retriever":
@@ -105,7 +113,7 @@ async def stream_chat_with_collection(name: str, request: ChatRequest):
                         if chunk_content:
                             yield f"data: {json.dumps({'type': 'chunk', 'text': chunk_content})}\n\n"
 
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'trace_id': trace_id})}\n\n"
 
         except Exception as e:
             logger.error(f"Streaming failed: {e}")
