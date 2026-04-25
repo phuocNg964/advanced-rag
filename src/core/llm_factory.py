@@ -3,62 +3,45 @@ from typing import Any
 
 from src.core.config import get_settings
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import ChatOllama
+from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 
 logger = logging.getLogger(__name__)
 
-def get_llm(model_size: str = "small", **kwargs: Any):
+# Provider → (ChatClass, api_key_field_name, api_key_kwarg_name)
+_PROVIDERS = {
+    "groq":   (ChatGroq,                  "groq_api_key",   "api_key"),
+    "openai": (ChatOpenAI,                "openai_api_key", "api_key"),
+    "gemini": (ChatGoogleGenerativeAI,    "gemini_api_key", "google_api_key"),
+}
+
+def get_llm(**kwargs: Any):
     """
-    Centralized factory to instantiate the configured LLM.
+    Pure dispatcher — instantiates the LLM class for the given provider.
     
-    Args:
-        model_size (str): "small" for fast/cheap tasks (routing, summarization), 
-                          "large" for heavy tasks (RAG generation).
-        **kwargs: Additional overrides for the LLM constructor (e.g., temperature).
+    Every argument (provider, model, temperature, …) must be supplied
+    explicitly by the caller. The only thing injected automatically is the
+    API key from settings (if not already provided).
     """
     settings = get_settings()
-    temperature = kwargs.pop("temperature", 0.3)
-    
-    if settings.use_local_llm or settings.llm_provider == "local":
-        logger.info(f"Instantiating Local LLM: {settings.ollama_model}")
-        return ChatOllama(
-            model=settings.ollama_model,
-            base_url=settings.ollama_host,
-            temperature=temperature,
-            **kwargs
+    provider = kwargs.pop("provider", None)
+
+    if not provider:
+        raise ValueError("'provider' is required (e.g. 'groq', 'openai', 'gemini')")
+
+    if provider not in _PROVIDERS:
+        raise ValueError(
+            f"Unknown provider '{provider}'. "
+            f"Supported: {', '.join(_PROVIDERS)}"
         )
-        
-    elif settings.llm_provider == "openai":
-        if not settings.openai_api_key:
-            raise ValueError("OPENAI_API_KEY must be set if llm_provider is 'openai'")
-        
-        # Use gpt-5-mini for small/fast routing tasks (next-gen intelligence while keeping costs extremely low).
-        # It supports custom temperatures unlike the nano models.
-        base_model = "gpt-4.1-nano" if model_size == "small" else "gpt-4.1-mini"
-        model_name = kwargs.pop("model", base_model)
-        
-        logger.info(f"Instantiating OpenAI LLM: {model_name}")
-        return ChatOpenAI(
-            model=model_name, 
-            temperature=temperature, 
-            api_key=settings.openai_api_key,
-            max_retries=kwargs.pop("max_retries", 5),
-            **kwargs
-        )
-        
-    else: # Default to Gemini
-        if not settings.gemini_api_key:
-            raise ValueError("GEMINI_API_KEY must be set if llm_provider is 'gemini'")
-            
-        base_model = "gemini-2.0-flash"
-        model_name = kwargs.pop("model", base_model)
-        
-        logger.info(f"Instantiating Gemini LLM: {model_name}")
-        return ChatGoogleGenerativeAI(
-            model=model_name,
-            temperature=temperature,
-            google_api_key=settings.gemini_api_key,
-            max_retries=kwargs.pop("max_retries", 5),
-            **kwargs
-        )
+
+    ChatClass, key_field, key_kwarg = _PROVIDERS[provider]
+    api_key = getattr(settings, key_field, None)
+
+    if not api_key:
+        raise ValueError(f"{key_field.upper()} must be set when provider='{provider}'")
+
+    # Inject API key (caller can still override)
+    kwargs.setdefault(key_kwarg, api_key)
+    logger.info(f"Instantiating {provider} LLM: {kwargs.get('model', '(default)')}") 
+    return ChatClass(**kwargs)

@@ -16,9 +16,16 @@ from src.core.config import Settings, get_settings
 from src.core.logger import get_logger
 from src.utils.image_helpers import attach_captions, to_base64
 
-from langchain_ollama import ChatOllama
+
 
 logger = get_logger(__name__)
+
+LLM_SUMMARIZER_ARGS = {
+    "provider": "groq",
+    "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "temperature": 0.3,
+    "top_p": 0.85
+}
 
 class IngestService:
     """
@@ -29,7 +36,7 @@ class IngestService:
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
         self._client: Optional[weaviate.WeaviateClient] = None
-        self._summarizer_llm = get_llm(model_size="small", temperature=0.3)
+        self._summarizer_llm = get_llm(**LLM_SUMMARIZER_ARGS)
 
     def __enter__(self):
         """Context manager entry."""
@@ -78,6 +85,7 @@ class IngestService:
     - Write in plain, factual sentences. Do NOT use bullet points or markdown formatting.
     - Do NOT say "the image shows" or "this figure illustrates" — just state the information directly.
     - Keep the summary between 2-5 sentences, prioritizing information density over length.""")
+
             # Process image to base64
             img_path = chunk['metadata']['image_path']
             img_base64 = to_base64(img_path)
@@ -174,8 +182,8 @@ class IngestService:
             
             if image_chunks:
                 logger.info(f"Summarizing {len(image_chunks)} images in parallel...")
-                # Rate limit to 2 workers to avoid crushing Gemini 15 RPM limit. OpenAI can handle 5.
-                workers = 1 if (self.settings.use_local_llm or self.settings.llm_provider == "local") else (5 if self.settings.llm_provider == "openai" else 2)
+                # Rate limit workers by provider: OpenAI/Groq can handle 5, Gemini capped at 2 (15 RPM).
+                workers = 5 if LLM_SUMMARIZER_ARGS['provider'] in ("openai", "gemini") else 2
                 with ThreadPoolExecutor(max_workers=workers) as pool:
                     futures = {pool.submit(self._summarize_image, chunk): chunk for chunk in image_chunks}
                     for future in as_completed(futures):

@@ -2,8 +2,10 @@ import operator
 import weaviate
 import json, re
 from pydantic import BaseModel, Field
-from typing import TypedDict, Annotated, List, Any
+from typing import TypedDict, Annotated, List, Any, Literal
 
+from transformers import pipeline
+import torch
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import SystemMessage, HumanMessage, AnyMessage, AIMessage
 
@@ -12,29 +14,44 @@ from psycopg_pool import AsyncConnectionPool
 
 from concurrent.futures import ThreadPoolExecutor
 
-
 from src.core.config import get_settings
 from src.core.logger import get_logger
 from src.core.llm_factory import get_llm
 from src.services.retriever import retrieve
 from src.utils.image_helpers import to_base64
 from src.core.weaviate_client import get_weaviate_client
+from src.agent.prompts import GUARDRAIL_PROMPT, ROUTER_PROMPT, REWRITER_PROMPT, GENERATOR_PROMPT
 
 logger = get_logger(__name__)
-
 _settings = get_settings()
-
-from src.agent.prompts import GUARDRAIL_PROMPT, ROUTER_PROMPT, REWRITER_PROMPT, GENERATOR_PROMPT
+# ── LLM Configuration 
+# Each role gets its own explicit config. Fill in provider, model & params.
+LLM_RAG_ARGS = {                # hard
+    "provider": "groq",
+    "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "temperature": 0.1,
+    "top_p": 0.95,
+}
+LLM_REWRITER_ARGS = {           # medium
+    "provider": "qwen/qwen3-32b",
+    "model": "",
+    "temperature": 0.3,
+    "top_p": 0.9,
+}
+LLM_ROUTER_ARGS = {             # easy
+    "provider": "groq",
+    "model": "llama-3.1-8b-instant",
+    "temperature": 0,
+}
 
 class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], operator.add]
     query: str
-    intention: str
-    violation_reason: str
-    collection_name: str  # Dynamic collection name passed per request
-    queries: List[str]
+    guardrail_check: Literal["BENIGN", "MALICIOUS"]
+    intention: Literal["GENERAL", "RAG"]
+    collection_name: str  
+    rewritten_queries: List[str]
     retrieved_documents: List[Any]
-
 
 class AgenticRAG:
     def __init__(self):
@@ -42,12 +59,11 @@ class AgenticRAG:
         Initialize the Agentic RAG core logic.
         Call setup() asynchronously to initialize the checkpointer and pool.
         """      
-        self.llm_rag = get_llm(model_size="large", temperature=0.3)
-        self.llm_rewriter = get_llm(model_size="small", temperature=0.3)
-        self.llm_router = get_llm(model_size="small", temperature=0.1)
-        self.llm_guardrail = get_llm(model_size="small", temperature=0.0)  # Zero temp for deterministic safety
+        self.llm_rag = get_llm(**LLM_RAG_ARGS)
+        self.llm_rewriter = get_llm(**LLM_REWRITER_ARGS)
+        self.llm_router = get_llm(**LLM_ROUTER_ARGS)
 
-        self.pool = None
+        self.pool = None    
         self.checkpointer = None
         self.graph = None 
         
@@ -67,10 +83,15 @@ class AgenticRAG:
         )
         await self.pool.open()
         self.checkpointer = AsyncPostgresSaver(self.pool)
-        
         # Ensure tables exist
         await self.checkpointer.setup()
-        
+        # Initialize Prompt Guard Model efficiently
+        self.guardrail_classifier = pipeline(
+            "text-classification",
+            model="meta-llama/Llama-Prompt-Guard-2-86M",
+            token=settings.huggingface_api_token,
+            device=0 if torch.cuda.is_available() else -1
+        )
         # Compile the graph with persistent checkpointer
         self.graph = self.builder.compile(checkpointer=self.checkpointer)
         logger.info("AgenticRAG setup complete.")
@@ -99,13 +120,13 @@ class AgenticRAG:
         builder.add_node("guardrail_block", self.guardrail_block)
 
         builder.set_entry_point('guardrail_check')
-        # Guardrail gate: safe → intent_router, unsafe → guardrail_block
+        # Guardrail gate: BENIGN → intent_router, MALICIOUS → guardrail_block
         builder.add_conditional_edges(
             "guardrail_check",
-            lambda state: state.get('intention', 'RAG'),
+            lambda state: state.get('guardrail_check', 'BENIGN'),
             {
-                "SAFE": "intent_router",
-                "UNSAFE": "guardrail_block"
+                "BENIGN": "intent_router",
+                "MALICIOUS": "guardrail_block"
             }
         )
         # Intent router: RAG or GENERAL
@@ -129,23 +150,16 @@ class AgenticRAG:
     def guardrail_check(self, state: AgentState):
         """Fast-fail safety gate. Runs before the intent router."""
         query = state.get('query', '')
-
-        messages = [
-            SystemMessage(content=GUARDRAIL_PROMPT),
-            HumanMessage(content=query)
-        ]
         try:
-            response = self.llm_guardrail.invoke(messages)
-            output = response.content.strip()
-            # Expected: "SAFE" or "UNSAFE: <reason>"
-            if output.upper().startswith("UNSAFE"):
-                reason = output.split(":", 1)[1].strip().lower() if ":" in output else "violating safety guidelines"
-                logger.warning(f"Guardrail blocked query. Reason: {reason}")
-                return {'intention': 'UNSAFE', 'violation_reason': reason}
+            # Using model already loaded during setup()
+            result = self.guardrail_classifier(query)
+           
+            decision = "MALICIOUS" if result[0]['label'] == "LABEL_1" else "BENIGN"
         except Exception as e:
-            logger.error(f"Guardrail check failed: {e}. Defaulting to SAFE.")
-
-        return {'intention': 'SAFE'}
+            logger.error(f"Guardrail check failed: {e}. Defaulting to BENIGN.")
+            decision = "BENIGN"
+            
+        return {'guardrail_check': decision}
 
     def intent_router(self, state: AgentState):
         """Classify safe queries as RAG or GENERAL."""
@@ -228,13 +242,12 @@ class AgenticRAG:
             queries = [query]
         
         logger.info(f"Rewritten queries: {queries}")
-        
-        return {'queries': queries}
+        return {'rewritten_queries': queries}
     
     def retriever(self, state: AgentState):
         """Execute retrieval plan"""
         
-        queries = state.get('queries', [])
+        queries = state.get('rewritten_queries', [])
         collection_name = state.get('collection_name', '')
         all_docs = []
         seen_ids = set()  # Track seen document IDs
@@ -295,13 +308,12 @@ class AgenticRAG:
                 text_part = f"[{i}] [{'IMAGE' if doc_type == 'Image' else 'TABLE'}] {caption}\n(Source: {source_ref})\n"
                 user_prompt.append({'type': 'text', 'text': text_part})
 
-                if not _settings.use_local_llm and _settings.llm_provider != "local":
-                    base64_img = to_base64(image_path)
-                    if base64_img:
-                        user_prompt.append({
-                            'type': 'image_url',
-                            'image_url': {'url': f'data:image/png;base64,{base64_img}'}
-                        })
+                base64_img = to_base64(image_path)
+                if base64_img:
+                    user_prompt.append({
+                        'type': 'image_url',
+                        'image_url': {'url': f'data:image/png;base64,{base64_img}'}
+                    })
             # Configure text chunks
             else:
                 text_part = f"[{i}] {props.get('text', '')}\n(Source: {source_ref})\n"
