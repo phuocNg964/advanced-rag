@@ -24,7 +24,7 @@ LLM_SUMMARIZER_ARGS = {
     "provider": "groq",
     "model": "meta-llama/llama-4-scout-17b-16e-instruct",
     "temperature": 0.3,
-    "top_p": 0.85
+    "model_kwargs": {"top_p": 0.85}
 }
 
 class IngestService:

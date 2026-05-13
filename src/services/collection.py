@@ -36,7 +36,7 @@ class CollectionService:
                     Property(name='type', data_type=DataType.TEXT, skip_vectorization=True),
                     Property(name='source', data_type=DataType.TEXT, skip_vectorization=False),
                     Property(name='image_path', data_type=DataType.TEXT, skip_vectorization=True),
-                    Property(name='caption', data_type=DataType.TEXT, skip_vectorization=True),
+                    Property(name='caption', data_type=DataType.TEXT, skip_vectorization=False),
                     Property(name='page_number', data_type=DataType.INT, skip_vectorization=True),
                 ]
             )

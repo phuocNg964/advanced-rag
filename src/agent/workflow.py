@@ -24,25 +24,6 @@ from src.agent.prompts import GUARDRAIL_PROMPT, ROUTER_PROMPT, REWRITER_PROMPT, 
 
 logger = get_logger(__name__)
 _settings = get_settings()
-# ── LLM Configuration 
-# Each role gets its own explicit config. Fill in provider, model & params.
-LLM_RAG_ARGS = {                # hard
-    "provider": "groq",
-    "model": "meta-llama/llama-4-scout-17b-16e-instruct",
-    "temperature": 0.1,
-    "top_p": 0.95,
-}
-LLM_REWRITER_ARGS = {           # medium
-    "provider": "qwen/qwen3-32b",
-    "model": "",
-    "temperature": 0.3,
-    "top_p": 0.9,
-}
-LLM_ROUTER_ARGS = {             # easy
-    "provider": "groq",
-    "model": "llama-3.1-8b-instant",
-    "temperature": 0,
-}
 
 class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], operator.add]
@@ -59,9 +40,9 @@ class AgenticRAG:
         Initialize the Agentic RAG core logic.
         Call setup() asynchronously to initialize the checkpointer and pool.
         """      
-        self.llm_rag = get_llm(**LLM_RAG_ARGS)
-        self.llm_rewriter = get_llm(**LLM_REWRITER_ARGS)
-        self.llm_router = get_llm(**LLM_ROUTER_ARGS)
+        self.llm_rag = get_llm("rag_generator")
+        self.llm_rewriter = get_llm("rewriter")
+        self.llm_router = get_llm("router")
 
         self.pool = None    
         self.checkpointer = None
@@ -107,7 +88,7 @@ class AgenticRAG:
         builder = StateGraph(AgentState)
 
         # Safety guardrail (entry point — runs before anything else)
-        builder.add_node("guardrail_check", self.guardrail_check)
+        builder.add_node("input_guardrail", self.input_guardrail)
         # Intention router
         builder.add_node("intent_router", self.intent_router)
         # RAG nodes
@@ -117,16 +98,16 @@ class AgenticRAG:
         # General LLM
         builder.add_node("general_llm", self.general_llm)
         # Guardrail block (response node for unsafe inputs)
-        builder.add_node("guardrail_block", self.guardrail_block)
+        builder.add_node("guardrail", self.guardrail)
 
-        builder.set_entry_point('guardrail_check')
+        builder.set_entry_point('input_guardrail')
         # Guardrail gate: BENIGN → intent_router, MALICIOUS → guardrail_block
         builder.add_conditional_edges(
-            "guardrail_check",
+            "input_guardrail",
             lambda state: state.get('guardrail_check', 'BENIGN'),
             {
                 "BENIGN": "intent_router",
-                "MALICIOUS": "guardrail_block"
+                "MALICIOUS": END
             }
         )
         # Intent router: RAG or GENERAL
@@ -143,11 +124,10 @@ class AgenticRAG:
 
         builder.add_edge('rag_generator', END)
         builder.add_edge('general_llm', END)
-        builder.add_edge('guardrail_block', END)
 
         return builder
     
-    def guardrail_check(self, state: AgentState):
+    def input_guardrail(self, state: AgentState):
         """Fast-fail safety gate. Runs before the intent router."""
         query = state.get('query', '')
         try:
@@ -155,11 +135,27 @@ class AgenticRAG:
             result = self.guardrail_classifier(query)
            
             decision = "MALICIOUS" if result[0]['label'] == "LABEL_1" else "BENIGN"
+
+
         except Exception as e:
             logger.error(f"Guardrail check failed: {e}. Defaulting to BENIGN.")
             decision = "BENIGN"
             
-        return {'guardrail_check': decision}
+        output_state = {'guardrail_check': decision}
+        
+        # If malicious, generate the polite refusal message right here
+        if decision == "MALICIOUS":
+            content = (
+                "I apologize, but I cannot fulfill this request. "
+                "Your input was flagged by our security guardrails for violating one or more of the following criteria:\n"
+                "- Prompt Injection attempts\n"
+                "- Jailbreaking or bypassing system instructions\n"
+                "- Malicious system manipulation"
+            )
+            refusal_msg = AIMessage(content=content)
+            output_state['messages'] = [refusal_msg]
+            
+        return output_state
 
     def intent_router(self, state: AgentState):
         """Classify safe queries as RAG or GENERAL."""
@@ -189,26 +185,17 @@ class AgenticRAG:
         return state.get('intention', 'RAG')
 
     def general_llm(self, state: AgentState):
-            """Handle standard conversational inputs that require no documents."""
-            query = state['query']
-            history = state.get('messages', [])
-            
-            system_instruction = SystemMessage(
-                content="You are a helpful AI assistant. Answer the user's conversational query naturally."
-            )
-            
-            messages = [system_instruction] + history[-6:] + [HumanMessage(content=query)]
-            response = self.llm_rag.invoke(messages)
-            
-            return {
-                'messages': [HumanMessage(content=query), response]
-            }
-
-    def guardrail_block(self, state: AgentState):
-        """Dead-end node that returns a safety refusal with the LLM's reason."""
+        """Handle standard conversational inputs that require no documents."""
         query = state['query']
-        reason = state.get('violation_reason', 'violating safety guidelines')
-        response = AIMessage(content=f"**I cannot process this request** — {reason}.")
+        history = state.get('messages', [])
+        
+        system_instruction = SystemMessage(
+            content="You are a helpful AI assistant. Answer the user's conversational query naturally."
+        )
+        
+        messages = [system_instruction] + history[-6:] + [HumanMessage(content=query)]
+        response = self.llm_rag.invoke(messages)
+        
         return {
             'messages': [HumanMessage(content=query), response]
         }

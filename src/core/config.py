@@ -17,14 +17,12 @@ class Settings(BaseSettings):
         extra="ignore"
     )
     
-    # LLM Provider Configuration
-    llm_provider: str = Field(default="gemini", description="Choose between 'gemini', 'openai', or 'groq'")
-    
     # API Keys
     gemini_api_key: str | None = None
     openai_api_key: str | None = None
     groq_api_key: str | None = None
     unstructured_api_key: str | None = None
+    huggingface_api_token: str | None = None
     
     # Weaviate
     weaviate_host: str = "localhost"

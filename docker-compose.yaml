@@ -35,7 +35,7 @@ services:
       PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
       CLUSTER_HOSTNAME: 'node1'
 
-  # RERANKER: Custom Vietnamese Build
+  # RERANKER
   reranker-transformers:
     image: cr.weaviate.io/semitechnologies/reranker-transformers:cross-encoder-ms-marco-MiniLM-L-6-v2
     environment:
@@ -45,7 +45,7 @@ services:
 
   # EMBEDDING: Multimodal
   text2vec-transformers:
-    image: cr.weaviate.io/semitechnologies/transformers-inference:google-gemma-3-300m-embedding-1.13.2
+    image: cr.weaviate.io/semitechnologies/transformers-inference:baai-bge-m3-onnx
     environment:
       ENABLE_CUDA: '0'
 

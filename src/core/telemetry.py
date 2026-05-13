@@ -6,13 +6,16 @@ Auto-instruments all LangChain/LangGraph calls when enabled.
 """
 import os
 import logging
+from dotenv import load_dotenv
 from phoenix.otel import register
 from opentelemetry import trace as otel_trace
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+# Ensure .env is loaded so os.getenv can read it
+load_dotenv()
 
 logger = logging.getLogger(__name__)
-
 _tracing_enabled = False
-
 
 def init_tracing():
     """
@@ -28,11 +31,11 @@ def init_tracing():
     if not endpoint:
         logger.info("PHOENIX_COLLECTOR_ENDPOINT not set — tracing disabled.")
         return
-
     try:
         tracer_provider = register(
             project_name="agentic-rag",
             auto_instrument=True,  # Auto-patches langchain-core, openai, etc.
+            #span_processor=None if is_dev else BatchSpanProcessor(...)
         )
         _tracing_enabled = True
         logger.info(f"Phoenix tracing enabled → {endpoint}")
