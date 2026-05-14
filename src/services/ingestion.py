@@ -1,21 +1,31 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional
+from pdfminer.pdfpage import PDFPage
 
 import weaviate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from src.core.llm_factory import get_llm
 from unstructured.chunking.title import chunk_by_title
 from unstructured.partition.pdf import partition_pdf
 from weaviate.util import generate_uuid5
 
-from src.config import Settings, get_settings
-from src.logging_config import get_logger
-from src.utils import attach_captions, to_base64
+from src.core.config import Settings, get_settings
+from src.core.logger import get_logger
+from src.utils.image_helpers import attach_captions, to_base64
+
+
 
 logger = get_logger(__name__)
+
+LLM_SUMMARIZER_ARGS = {
+    "provider": "groq",
+    "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "temperature": 0.3,
+    "model_kwargs": {"top_p": 0.85}
+}
 
 class IngestService:
     """
@@ -26,11 +36,7 @@ class IngestService:
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
         self._client: Optional[weaviate.WeaviateClient] = None
-        self._summarizer_llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash-lite",
-            temperature=0.1,
-            google_api_key=self.settings.gemini_api_key
-        )
+        self._summarizer_llm = get_llm(**LLM_SUMMARIZER_ARGS)
 
     def __enter__(self):
         """Context manager entry."""
@@ -60,10 +66,7 @@ class IngestService:
     def _summarize_image(self, chunk: dict) -> dict:
         """Summarize an image chunk using LLM vision."""
         try:
-
             caption = chunk['metadata']['caption']
-
-
             system_message = SystemMessage(content=f"""You are a document analyst preparing content for a semantic search index.
 
     You are given:
@@ -94,22 +97,17 @@ class IngestService:
                 "type": "image_url",
                 "image_url": {"url": f"data:image/png;base64,{img_base64}"}
             }]
-            
+
             # Create messages and invoke LLM
             human_message = HumanMessage(content=content)
             response = self._summarizer_llm.invoke([system_message, human_message])
-
             summary = response.content.strip()
             chunk['text'] = f"{caption}\n\n{summary}"
-            
             logger.info(f"Generated summary for image: {img_path}")
-
             return chunk 
-
         except Exception as e:
             logger.error(f"Error generating summaries: {e}")
             raise e
-
 
     def preprocess_documents(self, file_name: str, collection_name: str):
         try:
@@ -119,10 +117,24 @@ class IngestService:
             # Folder store processed images and tables (per-collection folder)
             processed_folder_path = self.settings.base_dir / "data" / "processed" / collection_name / Path(file_name).stem
 
+            # OOM Protection: Count pages quickly using pdfminer
+            try:
+                with open(file_path, 'rb') as f:
+                    # check_extractable=False ignores DRM restrictions for just counting pages
+                    page_count = sum(1 for _ in PDFPage.get_pages(f, check_extractable=False))
+            except Exception as e:
+                logger.warning(f"Could not determine page count for {file_name}: {e}")
+                page_count = 0
+                
+            # Fallback to fast mode (skips heavy Layout AI, drops image/table parsing but saves RAM)
+            strategy = "hi_res" if page_count <= 50 else "fast"
+            if strategy == "fast":
+                logger.warning(f"[OOM Protection] PDF {file_name} has {page_count} pages (>50). Falling back to 'fast' strategy. Images/Tables will NOT be extracted.")
+
             # Extract elements from PDF
             elements = partition_pdf(
                 filename=file_path,
-                strategy="hi_res",
+                strategy=strategy,
                 # hi_res_model_name="yolox_quantized",   # Faster model -> less accuracy extract elements
                 pdf_image_dpi=150,                      # Lower resolution (before 200)
                 ocr_mode="individual_blocks",           # Skip full-page OCR (not scanned PDF)
@@ -168,10 +180,11 @@ class IngestService:
                 else:
                     text_elements.append(ele)
             
-            # Summarize images in parallel (major speedup for image-heavy PDFs)
             if image_chunks:
                 logger.info(f"Summarizing {len(image_chunks)} images in parallel...")
-                with ThreadPoolExecutor(max_workers=5) as pool:
+                # Rate limit workers by provider: OpenAI/Groq can handle 5, Gemini capped at 2 (15 RPM).
+                workers = 5 if LLM_SUMMARIZER_ARGS['provider'] in ("openai", "gemini") else 2
+                with ThreadPoolExecutor(max_workers=workers) as pool:
                     futures = {pool.submit(self._summarize_image, chunk): chunk for chunk in image_chunks}
                     for future in as_completed(futures):
                         future.result()  # _summarize_image modifies chunk in-place
@@ -219,7 +232,7 @@ class IngestService:
             # Split further with RecursiveCharacterTextSplitter
             text_splitter = RecursiveCharacterTextSplitter(
                 chunk_size=1500,  # Target size for each chunk
-                chunk_overlap=0, # Overlap between consecutive chunks to maintain context
+                chunk_overlap=150, 
                 separators=['\n\n', '\n']
             )
             text_documents = text_splitter.split_documents(text_documents)

@@ -35,7 +35,7 @@ services:
       PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
       CLUSTER_HOSTNAME: 'node1'
 
-  # RERANKER: Custom Vietnamese Build
+  # RERANKER
   reranker-transformers:
     image: cr.weaviate.io/semitechnologies/reranker-transformers:cross-encoder-ms-marco-MiniLM-L-6-v2
     environment:
@@ -45,6 +45,61 @@ services:
 
   # EMBEDDING: Multimodal
   text2vec-transformers:
-    image: cr.weaviate.io/semitechnologies/transformers-inference:google-gemma-3-300m-embedding-1.13.2
+    image: cr.weaviate.io/semitechnologies/transformers-inference:baai-bge-m3-onnx
     environment:
       ENABLE_CUDA: '0'
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres    # Match your config
+      POSTGRES_PASSWORD: phuoc123 # Match your config
+      POSTGRES_DB: agentic-rag    # Match your config
+    ports:
+      - "5432:5432"              # Standard internal port
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    ports:
+      - "6006:6006"   # Web UI + HTTP OTLP collector
+      - "4317:4317"   # gRPC OTLP collector
+    environment:
+      - PHOENIX_WORKING_DIR=/mnt/data
+    volumes:
+      - phoenix_data:/mnt/data
+      
+  api:
+    build: . # build image locally by Dockerfile in current dir (.) 
+    ports:
+      - "8000:8000" # map host port to container port
+    profiles:
+      - production
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=production
+      - PG_HOST=postgres
+      - WEAVIATE_HOST=weaviate
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:4317
+    volumes:
+      - ./data:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '4.0'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - weaviate
+      - postgres
+      - phoenix
+
+volumes:
+  phoenix_data:
+    driver: local

@@ -61,3 +61,6 @@ models/
 # Logs
 *.log
 logs/
+
+# Database
+postgres_data/

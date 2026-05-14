@@ -17,7 +17,12 @@ const state = {
 };
 
 function generateSessionId() {
-    return 'session_' + Math.random().toString(36).substring(2, 15);
+    let sid = localStorage.getItem('rag_session_id');
+    if (!sid) {
+        sid = 'session_' + Math.random().toString(36).substring(2, 15);
+        localStorage.setItem('rag_session_id', sid);
+    }
+    return sid;
 }
 
 // ===========================
@@ -64,6 +69,20 @@ const API = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name })
         });
+        
+        if (!res.ok) {
+            let errorMsg = `HTTP Error ${res.status}`;
+            try {
+                const data = await res.json();
+                // FastAPI default validation error format
+                if (data.detail && Array.isArray(data.detail)) {
+                    errorMsg = data.detail.map(e => e.msg || e.description || JSON.stringify(e)).join(', ');
+                } else if (data.detail) {
+                    errorMsg = data.detail;
+                }
+            } catch (e) {}
+            throw new Error(errorMsg);
+        }
         return res.json();
     },
 
@@ -96,7 +115,7 @@ const API = {
     },
 
     async getJobStatus(jobId) {
-        const res = await fetch(`/jobs/${jobId}`);
+        const res = await fetch(`/collections/jobs/${jobId}`);
         return res.json();
     },
 
@@ -107,6 +126,56 @@ const API = {
             body: JSON.stringify({ message, session_id: sessionId })
         });
         return res.json();
+    },
+
+    async streamChat(collectionName, message, sessionId, onDocs, onToken, onComplete, onError) {
+        try {
+            const response = await fetch(`/collections/${collectionName}/chat/stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message, session_id: sessionId })
+            });
+
+            if (!response.ok) throw new Error("HTTP " + response.status);
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            let buffer = "";
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop();
+                
+                for (const part of parts) {
+                    if (part.startsWith('data: ')) {
+                        const jsonStr = part.substring(6);
+                        if (!jsonStr) continue;
+                        
+                        try {
+                            const data = JSON.parse(jsonStr);
+                            if (data.type === 'docs') {
+                                onDocs(data.documents);
+                            } else if (data.type === 'chunk') {
+                                onToken(data.text);
+                            } else if (data.type === 'error') {
+                                onError(data.message);
+                            } else if (data.type === 'done') {
+                                onComplete(data);
+                            }
+                        } catch (e) {
+                            console.error("Failed to parse chunk", e, part);
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            onError(err.message);
+        }
     }
 };
 
@@ -186,6 +255,13 @@ async function createCollection() {
     const name = elements.newCollectionName.value.trim();
     if (!name) return;
 
+    // Weaviate strict naming rule validation
+    const validPattern = /^[A-Z][a-zA-Z0-9_]*$/;
+    if (!validPattern.test(name)) {
+        alert("Invalid Name!\n\nCollection names MUST:\n1. Start with a Capital Letter\n2. Contain only letters, numbers, and underscores (_)\n3. Avoid spaces and hyphens (-)");
+        return;
+    }
+
     try {
         await API.createCollection(name);
         elements.newCollectionName.value = '';
@@ -193,6 +269,7 @@ async function createCollection() {
         selectCollection(name);
     } catch (err) {
         console.error('Failed to create collection:', err);
+        alert(`Failed to create collection:\n\n${err.message}`);
     }
 }
 
@@ -315,7 +392,9 @@ function renderJobs() {
         return;
     }
 
-    elements.jobsList.innerHTML = jobEntries.map(([id, job]) => {
+    jobEntries.forEach(([id, job]) => {
+        let jobEl = elements.jobsList.querySelector(`.job-item[data-id="${id}"]`);
+        
         let statusIcon = '';
         let statusClass = '';
         switch (job.status) {
@@ -333,13 +412,25 @@ function renderJobs() {
                 statusClass = 'status-failed';
                 break;
         }
-        return `
-            <div class="job-item" data-id="${id}">
+
+        if (!jobEl) {
+            const item = document.createElement('div');
+            item.className = 'job-item';
+            item.setAttribute('data-id', id);
+            item.innerHTML = `
                 <span class="filename">${job.filename}</span>
                 <span class="status ${statusClass}">${statusIcon}</span>
-            </div>
-        `;
-    }).join('');
+            `;
+            elements.jobsList.appendChild(item);
+        } else {
+            const statusSpan = jobEl.querySelector('.status');
+            // Only update if status class changed to avoid restarting animation
+            if (!statusSpan.classList.contains(statusClass)) {
+                statusSpan.className = `status ${statusClass}`;
+                statusSpan.innerHTML = statusIcon;
+            }
+        }
+    });
 }
 
 async function pollJobStatus(jobId) {
@@ -389,26 +480,50 @@ async function sendMessage() {
 
     try {
         elements.sendBtn.disabled = true;
-        const response = await API.chat(state.activeCollection, message, state.sessionId);
-
-        // Calculate response time
-        const endTime = performance.now();
-        const responseTime = ((endTime - startTime) / 1000).toFixed(2);
-
-        // Remove loading
-        document.getElementById(loadingId)?.remove();
-
-        // Store retrieved docs for citations
-        state.retrievedDocs = response.retrieved_documents || [];
-
-        // Add assistant message with response time
-        state.messages.push({
+        
+        // Prepare the assistant message in state
+        const assistantMsg = {
             role: 'assistant',
-            content: response.response,
-            docs: state.retrievedDocs,
-            responseTime: responseTime
-        });
-        renderMessages();
+            content: '',
+            docs: [],
+            responseTime: null
+        };
+        state.messages.push(assistantMsg);
+        
+        let docsReceived = false;
+
+        await API.streamChat(
+            state.activeCollection, 
+            message, 
+            state.sessionId,
+            (docs) => {
+                document.getElementById(loadingId)?.remove();
+                assistantMsg.docs = docs;
+                state.retrievedDocs = docs;
+                docsReceived = true;
+                renderMessages();
+            },
+            (token) => {
+                if (!docsReceived) {
+                    document.getElementById(loadingId)?.remove();
+                    docsReceived = true;
+                }
+                assistantMsg.content += token;
+                renderMessages();
+            },
+            (data) => {
+                const endTime = performance.now();
+                assistantMsg.responseTime = ((endTime - startTime) / 1000).toFixed(2);
+                assistantMsg.traceId = data?.trace_id || null;
+                renderMessages();
+            },
+            (errMsg) => {
+                console.error('Chat error:', errMsg);
+                document.getElementById(loadingId)?.remove();
+                assistantMsg.content += '\n\n[Error: ' + errMsg + ']';
+                renderMessages();
+            }
+        );
     } catch (err) {
         console.error('Chat failed:', err);
         document.getElementById(loadingId)?.remove();
@@ -445,7 +560,12 @@ function renderMessages() {
             }
             // Add response time if available
             if (msg.responseTime) {
-                responseTimeHtml = `<div class="response-time">⏱️ ${msg.responseTime}s</div>`;
+                let traceBtn = '';
+                if (msg.traceId) {
+                    traceBtn = `<button class="trace-btn" data-trace-id="${msg.traceId}"
+                        title="Copy trace ID & open Phoenix">🔍</button>`;
+                }
+                responseTimeHtml = `<div class="response-time">⏱️ ${msg.responseTime}s${traceBtn}</div>`;
             }
         } else {
             // For user messages: escape HTML for safety
@@ -463,6 +583,18 @@ function renderMessages() {
 
     // Render LaTeX math in chat messages
     renderLatex();
+
+    // Add trace button handlers
+    document.querySelectorAll('.trace-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const traceId = btn.dataset.traceId;
+            navigator.clipboard.writeText(traceId);
+            window.open('http://localhost:6006', '_blank');
+            btn.textContent = '✅';
+            setTimeout(() => { btn.textContent = '🔍'; }, 2000);
+        });
+    });
 
     scrollToBottom();
 }
