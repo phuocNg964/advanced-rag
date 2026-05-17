@@ -26,5 +26,13 @@ llms:
   router:
     provider: groq
     model: llama-3.1-8b-instant
-    temperature: 0.0
+    temperature: 0.1
     max_retries: 2
+
+  image_summarizer:
+    provider: groq
+    model: meta-llama/llama-4-scout-17b-16e-instruct
+    temperature: 0.3
+    model_kwargs:
+      top_p: 0.95
+    max_retries: 3

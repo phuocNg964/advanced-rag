@@ -7,25 +7,16 @@ import weaviate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_core.messages import SystemMessage, HumanMessage
-from src.core.llm_factory import get_llm
+from src.models.base import get_llm
 from unstructured.chunking.title import chunk_by_title
 from unstructured.partition.pdf import partition_pdf
 from weaviate.util import generate_uuid5
 
 from src.core.config import Settings, get_settings
 from src.core.logger import get_logger
-from src.utils.image_helpers import attach_captions, to_base64
-
-
+from src.components.parser import attach_captions, to_base64
 
 logger = get_logger(__name__)
-
-LLM_SUMMARIZER_ARGS = {
-    "provider": "groq",
-    "model": "meta-llama/llama-4-scout-17b-16e-instruct",
-    "temperature": 0.3,
-    "model_kwargs": {"top_p": 0.85}
-}
 
 class IngestService:
     """
@@ -36,7 +27,7 @@ class IngestService:
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
         self._client: Optional[weaviate.WeaviateClient] = None
-        self._summarizer_llm = get_llm(**LLM_SUMMARIZER_ARGS)
+        self._summarizer_llm = get_llm("image_summarizer")
 
     def __enter__(self):
         """Context manager entry."""
@@ -182,9 +173,7 @@ class IngestService:
             
             if image_chunks:
                 logger.info(f"Summarizing {len(image_chunks)} images in parallel...")
-                # Rate limit workers by provider: OpenAI/Groq can handle 5, Gemini capped at 2 (15 RPM).
-                workers = 5 if LLM_SUMMARIZER_ARGS['provider'] in ("openai", "gemini") else 2
-                with ThreadPoolExecutor(max_workers=workers) as pool:
+                with ThreadPoolExecutor(max_workers=2) as pool:
                     futures = {pool.submit(self._summarize_image, chunk): chunk for chunk in image_chunks}
                     for future in as_completed(futures):
                         future.result()  # _summarize_image modifies chunk in-place
