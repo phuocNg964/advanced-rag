@@ -1,19 +1,12 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from src.services.collection import CollectionService
+from src.core.database import CollectionService
 from src.core.logger import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter()
 
-class CollectionCreate(BaseModel):
-    name: str = Field(
-        ..., 
-        min_length=1, 
-        max_length=100,
-        pattern=r"^[A-Z][a-zA-Z0-9_]*$",
-        description="Weaviate collection names must start with a capital letter and contain only alphanumeric characters and underscores."
-    )
+from src.api.schemas.collections import CollectionCreate
 
 @router.post("")
 async def create_collection(request: CollectionCreate):

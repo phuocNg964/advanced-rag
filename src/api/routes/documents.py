@@ -7,8 +7,8 @@ from typing import Optional, Dict, Any
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
 
-from src.services.ingestion import IngestService
-from src.services.collection import CollectionService
+from src.components.ingestion import IngestService
+from src.core.database import CollectionService
 from src.core.logger import get_logger
 from src.core.config import get_settings
 
@@ -21,10 +21,7 @@ router = APIRouter()
 jobs: Dict[str, Dict[str, Any]] = {}
 MAX_FILE_SIZE = 100 * 1024 * 1024
 
-class JobResponse(BaseModel):
-    job_id: str
-    status: str
-    message: Optional[str] = None
+from src.api.schemas.documents import JobResponse
 
 
 def _do_ingestion(file_path: Path, collection_name: str):

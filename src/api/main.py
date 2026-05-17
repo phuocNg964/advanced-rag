@@ -4,10 +4,10 @@ from fastapi.staticfiles import StaticFiles
 
 from src.core.logger import get_logger, setup_logging
 from src.core.config import get_settings
-from src.agent.workflow import AgenticRAG
+from src.engines.agent_workflow import AgenticRAG
 from src.core.weaviate_client import init_weaviate, close_weaviate
 
-from src.api.routers import collections, documents, chat
+from src.api.routes import collections, documents, chat
 from src.core.telemetry import init_tracing
 
 logger = get_logger(__name__)

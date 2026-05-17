@@ -16,11 +16,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 from src.core.config import get_settings
 from src.core.logger import get_logger
-from src.core.llm_factory import get_llm
-from src.services.retriever import retrieve
-from src.utils.image_helpers import to_base64
+from src.models.base import get_llm
+from src.engines.rag_engine import retrieve
+from src.components.parser import to_base64
 from src.core.weaviate_client import get_weaviate_client
-from src.agent.prompts import GUARDRAIL_PROMPT, ROUTER_PROMPT, REWRITER_PROMPT, GENERATOR_PROMPT
+from src.engines.prompts import GUARDRAIL_PROMPT, ROUTER_PROMPT, REWRITER_PROMPT, GENERATOR_PROMPT
 
 logger = get_logger(__name__)
 _settings = get_settings()

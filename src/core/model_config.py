@@ -18,7 +18,7 @@ class ModelsConfig(BaseModel):
 
 @lru_cache
 def load_models_config() -> ModelsConfig:
-    config_path = get_settings().base_dir / "config" / "models.yaml"
+    config_path = get_settings().base_dir / "configs" / "model" / "models.yaml"
     if not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found at {config_path}")
     
