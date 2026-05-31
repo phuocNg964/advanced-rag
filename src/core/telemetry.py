@@ -35,7 +35,7 @@ def init_tracing():
         tracer_provider = register(
             project_name="agentic-rag",
             auto_instrument=True,  # Auto-patches langchain-core, openai, etc.
-            #span_processor=None if is_dev else BatchSpanProcessor(...)
+            batch=True,            # Uses BatchSpanProcessor to avoid warnings and improve perf
         )
         _tracing_enabled = True
         logger.info(f"Phoenix tracing enabled → {endpoint}")

@@ -17,18 +17,8 @@ rag = None
 from src.api.schemas.chat import ChatRequest, ChatResponse
 
 def _format_retrieved_docs(result: dict) -> List[Dict[str, Any]]:
-    """Extract and format retrieved documents from graph result."""
-    retrieved_docs = []
-    for doc in result.get("retrieved_documents", []):
-        props = doc.properties if hasattr(doc, 'properties') else doc
-        retrieved_docs.append({
-            "text": props.get("text", ""),
-            "source": props.get("source", ""),
-            "page_number": props.get("page_number", ""),
-            "type": props.get("type", ""),
-            "image_path": props.get("image_path", "")
-        })
-    return retrieved_docs
+    # This function is deprecated. It has been moved to AgenticRAG._format_retrieved_docs
+    pass
 
 @router.post("/{name}/chat", response_model=ChatResponse)
 async def chat_with_collection(name: str, request: ChatRequest):
@@ -41,22 +31,12 @@ async def chat_with_collection(name: str, request: ChatRequest):
         
     try:
         session_id = request.session_id or "default"
-        thread_id = f"{name}:{session_id}"
         
-        config = {"configurable": {"thread_id": thread_id}}
-        result = rag.graph.invoke(
-            {"query": request.message, "collection_name": name},
-            config=config
-        )
-        
-        response_text = ""
-        if result.get("messages"):
-            last_message = result["messages"][-1]
-            response_text = last_message.content if hasattr(last_message, 'content') else str(last_message)
+        result = await rag.chat(name, request.message, session_id)
         
         return ChatResponse(
-            response=response_text,
-            retrieved_documents=_format_retrieved_docs(result)
+            response=result["response"],
+            retrieved_documents=result["retrieved_documents"]
         )
         
     except Exception as e:
@@ -72,45 +52,43 @@ async def stream_chat_with_collection(name: str, request: ChatRequest):
         raise HTTPException(status_code=500, detail="RAG system not initialized")
         
     session_id = request.session_id or 'default'
-    thread_id = f"{name}:{session_id}"
-    config = {"configurable": {"thread_id": thread_id}}
+    
+    return StreamingResponse(
+        rag.stream_chat(name, request.message, session_id), 
+        media_type="text/event-stream"
+    )
 
-    async def event_generator():
-        try:
-            # Capture trace_id once the OTel span is active
-            trace_id = None
-
-            async for event in rag.graph.astream_events(
-                {
-                    "query": request.message,
-                    "collection_name": name,
-                },
-                config=config,
-                version='v2'
-            ):
-                # Grab trace_id from the first event (span context is now active)
-                if trace_id is None:
-                    trace_id = get_current_trace_id()
-
-                kind = event['event']
-
-                if kind == "on_chain_end" and event["name"] == "retriever":
-                    docs = event["data"]['output'].get("retrieved_documents", [])
-                    formatted_docs = _format_retrieved_docs({"retrieved_documents": docs})
-                    yield f"data: {json.dumps({'type': 'docs', 'documents': formatted_docs})}\n\n"
-
-                elif kind == "on_chat_model_stream":
-                    # Only stream tokens from the final generation nodes (not router/rewriter)
-                    node_name = event.get("metadata", {}).get("langgraph_node")
-                    if node_name in ("rag_generator", "general_llm"):
-                        chunk_content = event['data']['chunk'].content
-                        if chunk_content:
-                            yield f"data: {json.dumps({'type': 'chunk', 'text': chunk_content})}\n\n"
-
-            yield f"data: {json.dumps({'type': 'done', 'trace_id': trace_id})}\n\n"
-
-        except Exception as e:
-            logger.error(f"Streaming failed: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+@router.get("/{name}/chat/history")
+async def get_chat_history(name: str):
+    """
+    Retrieve the chat history for a given collection.
+    """
+    if not rag:
+        raise HTTPException(status_code=500, detail="RAG system not initialized")
         
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    try:
+        # Enforcing single conversation per collection via "default" session
+        history = await rag.get_history(name, session_id="default")
+        return {"history": history}
+    except Exception as e:
+        logger.error(f"Failed to fetch history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/{name}/chat/history")
+async def delete_chat_history(name: str):
+    """
+    Delete the chat history for a given collection.
+    """
+    if not rag:
+        raise HTTPException(status_code=500, detail="RAG system not initialized")
+        
+    try:
+        # Enforcing single conversation per collection via "default" session
+        success = await rag.clear_history(name, session_id="default")
+        if success:
+            return {"message": "Chat history deleted successfully."}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to clear history from database.")
+    except Exception as e:
+        logger.error(f"Failed to delete history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -63,16 +63,18 @@ class CollectionService:
         
         self.client.collections.delete(collection_name)
         
-        # Delete collection folders
+        logger.info(f"Collection '{collection_name}' deleted from Weaviate successfully")
+        return 'Collection deleted successfully'
+
+    def delete_collection_files(self, collection_name: str):
+        """Delete collection folders from disk. Can be run in background."""
         raw_dir = self.settings.base_dir / "data" / "raw" / collection_name
         processed_dir = self.settings.base_dir / "data" / "processed" / collection_name
         if raw_dir.exists():
             shutil.rmtree(raw_dir)
         if processed_dir.exists():
             shutil.rmtree(processed_dir)
-        
-        logger.info(f"Collection '{collection_name}' deleted successfully")
-        return 'Collection deleted successfully'
+        logger.info(f"Collection '{collection_name}' files deleted from disk")
 
     def delete_document(self, collection_name: str, file_document: str):
         """Delete a document's vectors from the collection and its files from disk."""

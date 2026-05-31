@@ -32,29 +32,38 @@ def _do_ingestion(file_path: Path, collection_name: str):
 
 async def run_ingestion_job_async(job_id: str, file_path: Path, collection_name: str):
     """Background task for document ingestion - runs in thread pool to avoid blocking."""
-    try:
-        jobs[job_id]["status"] = "processing"
-        logger.info(f"Starting ingestion job {job_id} for {file_path}")
+    from opentelemetry import trace
+    from src.core.telemetry import get_current_trace_id
+    tracer = trace.get_tracer(__name__)
+    
+    # Wrap the entire background job in a root span
+    with tracer.start_as_current_span("ingestion_job") as span:
+        trace_id = get_current_trace_id()
+        jobs[job_id]["trace_id"] = trace_id
         
-        # Run sync code in thread pool (doesn't block other API calls)
-        await asyncio.to_thread(_do_ingestion, file_path, collection_name)
-        
-        jobs[job_id]["status"] = "completed"
-        jobs[job_id]["message"] = f"Successfully ingested {file_path.name}"
-        logger.info(f"Completed ingestion job {job_id}")
-        
-    except Exception as e:
-        jobs[job_id]["status"] = "failed"
-        jobs[job_id]["message"] = str(e)
-        logger.error(f"Ingestion job {job_id} failed: {e}. Initiating rollback...")
-        
-        # Rollback: purge partially inserted chunks and cleanly remove the file so user can try again
         try:
-            coll_service = CollectionService()
-            coll_service.delete_document(collection_name, file_path.name)
-            logger.info(f"Rollback complete for {file_path.name}")
-        except Exception as rollback_e:
-            logger.error(f"Rollback failed for {file_path.name}: {rollback_e}")
+            jobs[job_id]["status"] = "processing"
+            logger.info(f"Starting ingestion job {job_id} for {file_path}")
+            
+            # Run sync code in thread pool (doesn't block other API calls)
+            await asyncio.to_thread(_do_ingestion, file_path, collection_name)
+            
+            jobs[job_id]["status"] = "completed"
+            jobs[job_id]["message"] = f"Successfully ingested {file_path.name}"
+            logger.info(f"Completed ingestion job {job_id}")
+            
+        except Exception as e:
+            jobs[job_id]["status"] = "failed"
+            jobs[job_id]["message"] = str(e)
+            logger.error(f"Ingestion job {job_id} failed: {e}. Initiating rollback...")
+        
+            # Rollback: purge partially inserted chunks and cleanly remove the file so user can try again
+            try:
+                coll_service = CollectionService()
+                coll_service.delete_document(collection_name, file_path.name)
+                logger.info(f"Rollback complete for {file_path.name}")
+            except Exception as rollback_e:
+                logger.error(f"Rollback failed for {file_path.name}: {rollback_e}")
 
 
 @router.post("/{name}/documents", response_model=JobResponse)
@@ -119,5 +128,6 @@ async def get_job_status(job_id: str):
     return JobResponse(
         job_id=job_id,
         status=job["status"],
-        message=job.get("message")
+        message=job.get("message"),
+        trace_id=job.get("trace_id")
     )

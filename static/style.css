@@ -389,11 +389,31 @@ body {
     padding: 20px 32px;
     border-bottom: 1px solid var(--border-color);
     background: var(--bg-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .chat-header h2 {
     font-size: 1.125rem;
     font-weight: 600;
+}
+
+.clear-chat-btn {
+    padding: 6px 12px;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.8125rem;
+    transition: var(--transition);
+}
+
+.clear-chat-btn:hover {
+    background: rgba(239, 68, 68, 0.1); /* light red hover */
+    border-color: var(--danger);
+    color: var(--danger);
 }
 
 .chat-messages {

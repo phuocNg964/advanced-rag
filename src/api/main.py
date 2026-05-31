@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 
 from src.core.logger import get_logger, setup_logging
 from src.core.config import get_settings
-from src.engines.agent_workflow import AgenticRAG
+from src.agentic_rag.agent_workflow import AgenticRAG
 from src.core.weaviate_client import init_weaviate, close_weaviate
 
 from src.api.routes import collections, documents, chat

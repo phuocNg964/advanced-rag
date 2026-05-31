@@ -19,12 +19,16 @@ async def create_collection(request: CollectionCreate):
         logger.error(f"Failed to create collection: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+
 @router.delete("/{name}")
-async def delete_collection(name: str):
+async def delete_collection(name: str, background_tasks: BackgroundTasks):
     """Delete a Weaviate collection."""
     try:
         service = CollectionService()
         message = service.delete_collection(name)
+        # Offload slow disk I/O (deleting thousands of images/text files) to the background
+        background_tasks.add_task(service.delete_collection_files, name)
         return {"message": message}
     except Exception as e:
         logger.error(f"Failed to delete collection: {e}")
