@@ -4,8 +4,6 @@ import json, re
 from pydantic import BaseModel, Field
 from typing import TypedDict, Annotated, List, Any, Literal
 
-from transformers import pipeline
-import torch
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import SystemMessage, HumanMessage, AnyMessage, AIMessage
 
@@ -20,7 +18,7 @@ from src.models.base import get_llm
 from src.components.retriever import retrieve
 from src.components.parser import to_base64
 from src.core.weaviate_client import get_weaviate_client
-from src.prompts.prompts import GUARDRAIL_PROMPT, ROUTER_PROMPT, REWRITER_PROMPT, GENERATOR_PROMPT
+from src.prompts.prompts import ROUTER_PROMPT, QUERY_RESOLVER_PROMPT, QUERY_DECOMPOSER_PROMPT, GENERATOR_PROMPT
 
 from src.core.telemetry import get_current_trace_id
 from opentelemetry import trace
@@ -31,9 +29,9 @@ _settings = get_settings()
 class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], operator.add]
     query: str
-    guardrail_check: Literal["BENIGN", "MALICIOUS"]
     intention: Literal["GENERAL", "RAG"]
     collection_name: str  
+    resolved_query: str
     rewritten_queries: List[str]
     retrieved_documents: List[Any]
 
@@ -69,13 +67,6 @@ class AgenticRAG:
         self.checkpointer = AsyncPostgresSaver(self.pool)
         # Ensure tables exist
         await self.checkpointer.setup()
-        # Initialize Prompt Guard Model efficiently
-        self.guardrail_classifier = pipeline(
-            "text-classification",
-            model="meta-llama/Llama-Prompt-Guard-2-86M",
-            token=settings.huggingface_api_token,
-            device=0 if torch.cuda.is_available() else -1
-        )
         # Compile the graph with persistent checkpointer
         self.graph = self.builder.compile(checkpointer=self.checkpointer)
         logger.info("AgenticRAG setup complete.")
@@ -90,79 +81,38 @@ class AgenticRAG:
         """Define the LangGraph state machine structure."""
         builder = StateGraph(AgentState)
 
-        # Safety guardrail (entry point — runs before anything else)
-        builder.add_node("input_guardrail", self.input_guardrail)
         # Intention router
         builder.add_node("intent_router", self.intent_router)
         # RAG nodes
-        builder.add_node('query_rewriter', self.query_rewriter)
+        builder.add_node('query_resolver', self.query_resolver)
+        builder.add_node('query_decomposer', self.query_decomposer)
         builder.add_node('retriever', self.retriever)
         builder.add_node('rag_generator', self.rag_generator)
         # General LLM
         builder.add_node("general_llm", self.general_llm)
-        # Guardrail block (response node for unsafe inputs)
-
-        builder.set_entry_point('input_guardrail')
-        # Guardrail gate: BENIGN → intent_router, MALICIOUS → guardrail_block
-        builder.add_conditional_edges(
-            "input_guardrail",
-            lambda state: state.get('guardrail_check', 'BENIGN'),
-            {
-                "BENIGN": "intent_router",
-                "MALICIOUS": END
-            }
-        )
+        builder.set_entry_point('intent_router')
         # Intent router: RAG or GENERAL
         builder.add_conditional_edges(
             "intent_router",
             lambda state: state.get("intention", "RAG"),
             {
-                "RAG": "query_rewriter",
+                "RAG": "query_resolver",
                 "GENERAL": "general_llm",
             }
         )
-        builder.add_edge('query_rewriter', 'retriever')
+        builder.add_edge('query_resolver', 'query_decomposer')
+        builder.add_edge('query_decomposer', 'retriever')
         builder.add_edge('retriever', 'rag_generator')
 
         builder.add_edge('rag_generator', END)
         builder.add_edge('general_llm', END)
 
         return builder
-    
-    def input_guardrail(self, state: AgentState):
-        """Fast-fail safety gate. Runs before the intent router."""
-        query = state.get('query', '')
-        try:
-            # Using model already loaded during setup()
-            result = self.guardrail_classifier(query)
-           
-            decision = "MALICIOUS" if result[0]['label'] == "LABEL_1" else "BENIGN"
-
-
-        except Exception as e:
-            logger.error(f"Guardrail check failed: {e}. Defaulting to BENIGN.")
-            decision = "BENIGN"
-            
-        output_state = {'guardrail_check': decision}
-        
-        # If malicious, generate the polite refusal message right here
-        if decision == "MALICIOUS":
-            content = (
-                "I apologize, but I cannot fulfill this request. "
-                "Your input was flagged by our security guardrails for violating one or more of the following criteria:\n"
-                "- Prompt Injection attempts\n"
-                "- Jailbreaking or bypassing system instructions\n"
-                "- Malicious system manipulation"
-            )
-            refusal_msg = AIMessage(content=content)
-            output_state['messages'] = [refusal_msg]
-            
-        return output_state
 
     def intent_router(self, state: AgentState):
         """Classify safe queries as RAG or GENERAL."""
         query = state.get('query', '')
-        history = state.get('messages', [])[-6:]
+        history = state.get('messages', [])[-4:]
 
         messages = [SystemMessage(content=ROUTER_PROMPT)]
         messages.extend(history)
@@ -191,24 +141,55 @@ class AgenticRAG:
             content="You are a helpful AI assistant. Answer the user's conversational query naturally."
         )
         
-        messages = [system_instruction] + history[-6:] + [HumanMessage(content=query)]
+        messages = [system_instruction] + history[-4:] + [HumanMessage(content=query)]
         response = self.llm_rag.invoke(messages)
         
         return {
             'messages': [HumanMessage(content=query), response]
         }
 
-    def query_rewriter(self, state: AgentState):
-        """Rewrite query to be more specific and context-aware"""
+    def query_resolver(self, state: AgentState):
+        """Resolve references and remove filler from query"""
         query = state.get('query', '')
         history = state.get('messages', [])
 
-        system_prompt = REWRITER_PROMPT
+        system_prompt = QUERY_RESOLVER_PROMPT
 
-        # Build messages: system instructions → chat history → current query
-        messages = [SystemMessage(content=system_prompt)]
-        messages.extend(history[-6:])  # Last 3 turns of conversation context
-        messages.append(HumanMessage(content=query))
+        # Format history into a string to match the prompt's expected format
+        history_str = ""
+        for msg in history[-4:]:
+            role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+            content = msg.content if hasattr(msg, 'content') else str(msg)
+            history_str += f"{role}: \"{content}\"\n"
+            
+        formatted_input = f"History:\n{history_str.strip()}\n\nInput: \"{query}\""
+
+        # Build messages: system instructions → formatted text input
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=formatted_input)
+        ]
+        
+        try:
+            raw_response = self.llm_rewriter.invoke(messages)
+            resolved_query = raw_response.content.strip()
+        except Exception as e:
+            logger.warning(f"Query resolving failed: {e}. Using original query.")
+            resolved_query = query
+            
+        logger.info(f"Resolved query: {resolved_query}")
+        return {'resolved_query': resolved_query}
+
+    def query_decomposer(self, state: AgentState):
+        """Decompose query into sub-queries if necessary"""
+        resolved_query = state.get('resolved_query', state.get('query', ''))
+
+        system_prompt = QUERY_DECOMPOSER_PROMPT
+
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=resolved_query)
+        ]
         
         try:
             raw_response = self.llm_rewriter.invoke(messages)
@@ -223,10 +204,10 @@ class AgenticRAG:
                 raise ValueError(f"No JSON array found in response: {text[:200]}")
             
         except Exception as e:
-            logger.warning(f"Query rewriting failed: {e}. Using original query.")
-            queries = [query]
+            logger.warning(f"Query decomposing failed: {e}. Using resolved query.")
+            queries = [resolved_query]
         
-        logger.info(f"Rewritten queries: {queries}")
+        logger.info(f"Decomposed queries: {queries}")
         return {'rewritten_queries': queries}
     
     def retriever(self, state: AgentState):
