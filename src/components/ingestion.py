@@ -115,9 +115,9 @@ class IngestService:
                 prep_span.set_attribute("page_count", page_count)
                     
                 # Fallback to fast mode (skips heavy Layout AI, drops image/table parsing but saves RAM)
-                strategy = "hi_res" if page_count <= 50 else "fast"                
+                strategy = "hi_res" if page_count <= 100 else "fast"                
                 if strategy == "fast":
-                    logger.warning(f"[OOM Protection] PDF {file_name} has {page_count} pages (>50). Falling back to 'fast' strategy. Images/Tables will NOT be extracted.")
+                    logger.warning(f"[OOM Protection] PDF {file_name} has {page_count} pages (>150). Falling back to 'fast' strategy. Images/Tables will NOT be extracted.")
 
                 with tracer.start_as_current_span("read_pdf") as read_span:
                     # Extract elements from PDF
@@ -140,8 +140,8 @@ class IngestService:
                     etype = d.get('type', '')
                     if etype in ['UncategorizedText', 'Header']:
                         continue
-                    # Remove insignificant images by file size (before text check, since images may have empty text)
-                    if etype == 'Image' and ele.metadata.image_path:
+                    # Remove insignificant images and tables by file size (before text check)
+                    if etype in ['Image', 'Table'] and ele.metadata.image_path:
                         if Path(ele.metadata.image_path).stat().st_size < MIN_IMAGE_SIZE:
                             Path(ele.metadata.image_path).unlink(missing_ok=True)
                             continue
@@ -172,20 +172,13 @@ class IngestService:
                 if image_chunks:
                     with tracer.start_as_current_span("summarize_all_images") as sum_all_span:
                         sum_all_span.set_attribute("image_count", len(image_chunks))
-                        logger.info(f"Summarizing {len(image_chunks)} images in parallel...")
+                        logger.info(f"Summarizing {len(image_chunks)} images sequentially with a delay to respect rate limits...")
                         
-                        ctx = otel_context.get_current()
-                        def wrap_summarize(chunk):
-                            token = otel_context.attach(ctx)
-                            try:
-                                return self._summarize_image(chunk)
-                            finally:
-                                otel_context.detach(token)
-                                
-                        with ThreadPoolExecutor(max_workers=2) as pool:
-                            futures = {pool.submit(wrap_summarize, chunk): chunk for chunk in image_chunks}
-                            for future in as_completed(futures):
-                                future.result()  # _summarize_image modifies chunk in-place
+                        import time
+                        for i, chunk in enumerate(image_chunks):
+                            self._summarize_image(chunk)
+                            if i < len(image_chunks) - 1:
+                                time.sleep(3)  # 3-second delay between requests to help avoid 429 Rate Limit
 
                 # Build multimodal documents from images and tables
                 multimodal_documents = []

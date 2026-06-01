@@ -88,6 +88,11 @@ const API = {
 
     async deleteCollection(name) {
         const res = await fetch(`/collections/${name}`, { method: 'DELETE' });
+        if (!res.ok) {
+            let errorMsg = `HTTP Error ${res.status}`;
+            try { const data = await res.json(); if (data.detail) errorMsg = data.detail; } catch (e) {}
+            throw new Error(errorMsg);
+        }
         return res.json();
     },
 
@@ -101,6 +106,11 @@ const API = {
         const res = await fetch(`/collections/${collectionName}/documents/${encodeURIComponent(documentName)}`, {
             method: 'DELETE'
         });
+        if (!res.ok) {
+            let errorMsg = `HTTP Error ${res.status}`;
+            try { const data = await res.json(); if (data.detail) errorMsg = data.detail; } catch (e) {}
+            throw new Error(errorMsg);
+        }
         return res.json();
     },
 
@@ -187,6 +197,11 @@ const API = {
         const res = await fetch(`/collections/${collectionName}/chat/history`, {
             method: 'DELETE'
         });
+        if (!res.ok) {
+            let errorMsg = `HTTP Error ${res.status}`;
+            try { const data = await res.json(); if (data.detail) errorMsg = data.detail; } catch (e) {}
+            throw new Error(errorMsg);
+        }
         return res.json();
     }
 };

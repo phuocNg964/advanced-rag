@@ -26,19 +26,21 @@ Output: What about the useEffect hook?
 QUERY_DECOMPOSER_PROMPT = """You are a Query Decomposer. Output ONLY a JSON array of strings.
 
 Rules:
-1. Split the input query ONLY when each part retrieves from different sources independently.
+1. Split ONLY when the sub-questions would be answered by different, unrelated documents.
 2. Keep as a single item when it is the same question applied across a list of items.
+3. When in doubt, keep as a single query. Splitting has a retrieval cost.
 
-Output: JSON array of strings, 1-3 items.
+Output format: A JSON array of 1–3 strings. Nothing else.
 
 Examples:
-
-Input: "Why use LoRA?"
-Output: ["Why use LoRA?"]
 
 Input: "What are the accuracy scores for ResNet on CIFAR-10, CIFAR-100, and ImageNet?"
 Output: ["What are the accuracy scores for ResNet on CIFAR-10, CIFAR-100, and ImageNet?"]
 WHY: Same question across a list — always 1 query, never split.
+
+Input: "Explain QLoRA's memory savings and its training performance"
+Output: ["Explain QLoRA's memory savings and its training performance"]
+WHY: Two aspects of the same topic — the same documents answer both.
 
 Input: "How does BLIP handle image captioning, and what optimizer does ViT use for fine-tuning?"
 Output: ["How does BLIP handle image captioning?", "What optimizer does ViT use for fine-tuning?"]

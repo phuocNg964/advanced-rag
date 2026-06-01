@@ -230,7 +230,8 @@ class AgenticRAG:
                         query,
                         collection_name=collection_name,
                         top_k=25,
-                        top_k_reranker=7,
+                        top_k_reranker=5,
+                        alpha=0.6,
                         client=client
                     ) for query in queries
                 ]
@@ -447,7 +448,7 @@ class AgenticRAG:
         config = {"configurable": {"thread_id": thread_id}}
         
         try:
-            await self.checkpointer.adelete_thread(config)
+            await self.checkpointer.adelete_thread(thread_id)
             return True
         except Exception as e:
             logger.error(f"Failed to clear history for {thread_id}: {e}")
