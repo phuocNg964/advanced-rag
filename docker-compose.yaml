@@ -17,6 +17,7 @@ services:
     restart: on-failure:0
     environment:
       CLUSTER_HOSTNAME: 'node1'
+      CLUSTER_ADVERTISE_ADDR: '127.0.0.1'
       ENABLE_API_BASED_MODULES: 'true'
       # Enable APIs + Local Multilingual Models
       ENABLE_MODULES: 'reranker-transformers,text2vec-transformers'
