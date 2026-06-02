@@ -12,8 +12,9 @@ QUERY_RESOLVER_PROMPT = """You are a Query Resolver. Your job is to prepare a us
 
 Rules:
 1. Resolve references: Replace pronouns and vague references ("it", "that", "this") using chat history. If no history or no references exist, leave the query unchanged.
-2. Preserve exactly: Any proper noun, identifier, exact value, or specific term that would change meaning or break search if altered. Rewrite only filler and grammar.
-3. Remove filler: Strip phrases that add no search value ("As a researcher...", "Could you please...", "I was wondering...").
+2. Inject missing subjects: If the user asks a specific factual question without naming the entity (e.g. "what is the score?"), extract the main topic/entity from the history and inject it into the query.
+3. Preserve exactly: Any proper noun, identifier, exact value, or specific term that would change meaning or break search if altered. Rewrite only filler and grammar.
+4. Remove filler: Strip phrases that add no search value ("As a researcher...", "Could you please...", "I was wondering...").
 
 Output ONLY the resolved and cleaned query as a plain string. No markdown, no explanation.
 
@@ -23,33 +24,35 @@ Input: "Could you please tell me what about the useEffect one?"
 Output: What about the useEffect hook?
 """
 
-QUERY_DECOMPOSER_PROMPT = """You are a Query Decomposer. Output ONLY a JSON array of strings.
+QUERY_DECOMPOSER_PROMPT = """You are a Query Decomposer. Output ONLY a valid JSON array of strings.
 
-Rules:
-1. Split ONLY when the sub-questions would be answered by different, unrelated documents.
-2. Keep as a single item when it is the same question applied across a list of items.
-3. When in doubt, keep as a single query. Splitting has a retrieval cost.
+TASK: Decide if a query should be kept as 1 string, or split into 2-3 distinct strings.
 
-Output format: A JSON array of 1–3 strings. Nothing else.
+RULES:
+1. Keep as ONE string if the query asks about multiple metrics, benchmarks, or attributes of the SAME thing or comparison (they are usually in the same table/document).
+2. NEVER paraphrase or generate multiple variations of the same question.
+3. NEVER split dependent clauses or premises from their questions. For example, "Given X is true, why Y?" must remain ONE query.
+4. ONLY split if the query asks about completely different topics, or explicitly asks for comparisons across different data sources (e.g., Table A vs Table B, English eval vs Chinese eval).
+5. When splitting, keep the compared entities intact in each sub-query.
 
-Examples:
+EXAMPLES (DO NOT SPLIT - Output 1 string):
+Input: "How does the iPhone 15 Pro compare to the Galaxy S24 Ultra in battery life and camera quality?"
+Output: ["How does the iPhone 15 Pro compare to the Galaxy S24 Ultra in battery life and camera quality?"]
 
-Input: "What are the accuracy scores for ResNet on CIFAR-10, CIFAR-100, and ImageNet?"
-Output: ["What are the accuracy scores for ResNet on CIFAR-10, CIFAR-100, and ImageNet?"]
-WHY: Same question across a list — always 1 query, never split.
+Input: "Given that Llama scores highest on Reward Bench, why use a custom RM?"
+Output: ["Given that Llama scores highest on Reward Bench, why use a custom RM?"]
 
-Input: "Explain QLoRA's memory savings and its training performance"
-Output: ["Explain QLoRA's memory savings and its training performance"]
-WHY: Two aspects of the same topic — the same documents answer both.
+EXAMPLES (SPLIT - Output 2-3 strings):
+Input: "Based on the US Report and the EU Report, how does Product X compare to Product Y in safety and pricing?"
+Output: ["How does Product X compare to Product Y in safety (US Report)?", "How does Product X compare to Product Y in pricing (EU Report)?"]
 
-Input: "How does BLIP handle image captioning, and what optimizer does ViT use for fine-tuning?"
-Output: ["How does BLIP handle image captioning?", "What optimizer does ViT use for fine-tuning?"]
-WHY: Unrelated topics — different documents would answer each independently.
+Input: "What kind of screen does the iPad use, and how does the Apple Watch track sleep?"
+Output: ["What kind of screen does the iPad use?", "How does the Apple Watch track sleep?"]
 """
 
 GENERATOR_PROMPT = """
-Answer using only the provided documents. Do not use external knowledge.
-If information is not found, say "Not found in provided documents."
+Answer based on the provided documents. You may synthesize and infer relationships across multiple documents to answer the question, but do not hallucinate external facts.
+If the provided documents do not contain the necessary information to synthesize an answer, explicitly say "Not found in provided documents."
 
 Citations:
 - Cite every claim with its document number immediately after the statement

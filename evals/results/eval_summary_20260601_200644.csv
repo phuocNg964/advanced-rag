@@ -1,0 +1,12 @@
+metric,score
+context_recall,0.8681
+context_precision,0.7522
+faithfulness,0.6908
+answer_relevancy,0.6573
+
+question_type,count,context_recall,context_precision,faithfulness,answer_relevancy
+comparative,8,1.0000,0.8877,0.7013,0.5550
+explanatory,11,1.0000,0.8786,0.7051,0.8273
+factual,14,0.7857,0.5833,0.7143,0.6991
+inferential,7,0.6667,0.6151,0.4206,0.4472
+procedural,8,0.8750,0.8583,0.8558,0.6365

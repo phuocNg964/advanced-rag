@@ -39,6 +39,8 @@ tqdm==4.67.1
 
 # Observability (Phoenix Tracing)
 arize-phoenix-otel
+arize-phoenix
 openinference-instrumentation-langchain
 opentelemetry-api
 opentelemetry-instrumentation-weaviate
+pandas>=2.0.0
