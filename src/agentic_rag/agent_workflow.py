@@ -17,10 +17,13 @@ from concurrent.futures import ThreadPoolExecutor
 from src.core.config import get_settings
 from src.core.logger import get_logger
 from src.models.base import get_llm
-from src.engines.rag_engine import retrieve
+from src.components.retriever import retrieve
 from src.components.parser import to_base64
 from src.core.weaviate_client import get_weaviate_client
-from src.engines.prompts import GUARDRAIL_PROMPT, ROUTER_PROMPT, REWRITER_PROMPT, GENERATOR_PROMPT
+from src.prompts.prompts import GUARDRAIL_PROMPT, ROUTER_PROMPT, REWRITER_PROMPT, GENERATOR_PROMPT
+
+from src.core.telemetry import get_current_trace_id
+from opentelemetry import trace
 
 logger = get_logger(__name__)
 _settings = get_settings()
@@ -98,7 +101,6 @@ class AgenticRAG:
         # General LLM
         builder.add_node("general_llm", self.general_llm)
         # Guardrail block (response node for unsafe inputs)
-        builder.add_node("guardrail", self.guardrail)
 
         builder.set_entry_point('input_guardrail')
         # Guardrail gate: BENIGN → intent_router, MALICIOUS → guardrail_block
@@ -113,7 +115,7 @@ class AgenticRAG:
         # Intent router: RAG or GENERAL
         builder.add_conditional_edges(
             "intent_router",
-            self.route,
+            lambda state: state.get("intention", "RAG"),
             {
                 "RAG": "query_rewriter",
                 "GENERAL": "general_llm",
@@ -179,10 +181,6 @@ class AgenticRAG:
 
         logger.info(f"Router classified intent as: {intention}")
         return {'intention': intention}
-
-    def route(self, state: AgentState) -> str:
-        """Helper function for the conditional edge to determine routing path."""
-        return state.get('intention', 'RAG')
 
     def general_llm(self, state: AgentState):
         """Handle standard conversational inputs that require no documents."""
@@ -325,6 +323,10 @@ class AgenticRAG:
         messages = self._build_rag_messages(query, retrieved_documents)
         
         response = await self.llm_rag.ainvoke(messages)
+        
+        # Attach retrieved documents to the response message so it persists in the state
+        formatted_docs = self._format_retrieved_docs(retrieved_documents)
+        response.additional_kwargs["docs"] = formatted_docs
 
         logger.info(f"RAG response generated ({len(response.content)} chars)")
         
@@ -335,9 +337,137 @@ class AgenticRAG:
             ]
         }
 
+    def _format_retrieved_docs(self, docs: list) -> list:
+        """Extract and format retrieved documents from graph result."""
+        retrieved_docs = []
+        for doc in docs:
+            props = doc.properties if hasattr(doc, 'properties') else doc
+            
+            # Extract score from metadata if available
+            score = None
+            if hasattr(doc, 'metadata') and doc.metadata:
+                score = getattr(doc.metadata, 'score', None)
+                
+            retrieved_docs.append({
+                "text": props.get("text", ""),
+                "source": props.get("source", ""),
+                "page_number": props.get("page_number", ""),
+                "type": props.get("type", ""),
+                "image_path": props.get("image_path", ""),
+                "score": score
+            })
+        return retrieved_docs
+
+    async def chat(self, collection_name: str, message: str, session_id: str = "default") -> dict:
+        """Execute normal chat workflow."""
+        thread_id = f"{collection_name}:{session_id}"
+        config = {"configurable": {"thread_id": thread_id}}
+        
+        result = await self.graph.ainvoke(
+            {"query": message, "collection_name": collection_name},
+            config=config
+        )
+        
+        response_text = ""
+        if result.get("messages"):
+            last_message = result["messages"][-1]
+            response_text = last_message.content if hasattr(last_message, 'content') else str(last_message)
+            
+        docs = result.get("retrieved_documents", [])
+        return {
+            "response": response_text,
+            "retrieved_documents": self._format_retrieved_docs(docs)
+        }
+
+    async def stream_chat(self, collection_name: str, message: str, session_id: str = "default"):
+        """Stream the RAG response token-by-token using SSE."""
+        tracer = trace.get_tracer(__name__)
+        
+        thread_id = f"{collection_name}:{session_id}"
+        config = {"configurable": {"thread_id": thread_id}}
+
+        try:
+            with tracer.start_as_current_span("agent_chat") as span:
+                trace_id = get_current_trace_id()
+                
+                async for event in self.graph.astream_events(
+                    {
+                        "query": message,
+                        "collection_name": collection_name,
+                    },
+                    config=config,
+                    version='v2'
+                ):
+                    kind = event['event']
+
+                    if kind == "on_chain_end" and event["name"] == "retriever":
+                        docs = event["data"]['output'].get("retrieved_documents", [])
+                        formatted_docs = self._format_retrieved_docs(docs)
+                        yield f"data: {json.dumps({'type': 'docs', 'documents': formatted_docs})}\n\n"
+
+                    elif kind == "on_chat_model_stream":
+                        node_name = event.get("metadata", {}).get("langgraph_node")
+                        if node_name in ("rag_generator", "general_llm"):
+                            chunk_content = event['data']['chunk'].content
+                            if chunk_content:
+                                yield f"data: {json.dumps({'type': 'chunk', 'text': chunk_content})}\n\n"
+
+                yield f"data: {json.dumps({'type': 'done', 'trace_id': trace_id})}\n\n"
+
+        except Exception as e:
+            logger.error(f"Streaming failed: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
     def get_graph(self):
         """Hiển thị graph dưới dạng hình ảnh"""
         from IPython.display import Image, display
-        
+
         img = self.graph.get_graph().draw_mermaid_png()
         return display(Image(img))
+
+    async def get_history(self, collection_name: str, session_id: str = "default") -> list:
+        """Retrieve the conversational history from LangGraph PostgreSQL state."""
+        thread_id = f"{collection_name}:{session_id}"
+        config = {"configurable": {"thread_id": thread_id}}
+        
+        try:
+            state_snapshot = await self.graph.aget_state(config)
+            
+            # If no state exists yet
+            if not state_snapshot or not state_snapshot.values:
+                return []
+                
+            messages = state_snapshot.values.get("messages", [])
+            formatted_history = []
+            
+            for msg in messages:
+                role = "user" if isinstance(msg, HumanMessage) else "assistant"
+                content = msg.content if hasattr(msg, 'content') else str(msg)
+                
+                # Extract docs from AI message metadata if available
+                docs = msg.additional_kwargs.get("docs", []) if hasattr(msg, 'additional_kwargs') else []
+                
+                formatted_history.append({
+                    "role": role,
+                    "content": content,
+                    "docs": docs
+                })
+                
+            return formatted_history
+        except Exception as e:
+            logger.error(f"Failed to fetch history for {thread_id}: {e}")
+            return []
+
+    async def clear_history(self, collection_name: str, session_id: str = "default"):
+        """Clear the conversational history using LangGraph's checkpointer delete method."""
+        thread_id = f"{collection_name}:{session_id}"
+        logger.info(f"Clearing chat history for thread: {thread_id}")
+        
+        config = {"configurable": {"thread_id": thread_id}}
+        
+        try:
+            await self.checkpointer.adelete_thread(config)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to clear history for {thread_id}: {e}")
+            raise Exception(f"Failed to clear history: {e}")

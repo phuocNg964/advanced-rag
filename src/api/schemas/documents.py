@@ -5,3 +5,4 @@ class JobResponse(BaseModel):
     job_id: str
     status: str
     message: Optional[str] = None
+    trace_id: Optional[str] = None

@@ -176,6 +176,18 @@ const API = {
         } catch (err) {
             onError(err.message);
         }
+    },
+
+    async getChatHistory(collectionName) {
+        const res = await fetch(`/collections/${collectionName}/chat/history`);
+        return res.json();
+    },
+
+    async clearChatHistory(collectionName) {
+        const res = await fetch(`/collections/${collectionName}/chat/history`, {
+            method: 'DELETE'
+        });
+        return res.json();
     }
 };
 
@@ -228,20 +240,28 @@ function renderCollections() {
     });
 }
 
-function selectCollection(name) {
+async function selectCollection(name) {
     state.activeCollection = name;
     state.messages = [];
     state.retrievedDocs = [];
     state.documents = [];
-    state.sessionId = generateSessionId();  // New session for new collection
+    state.sessionId = "default";  // Enforce single conversation per collection
 
     renderCollections();
     elements.uploadSection.style.display = 'block';
-    elements.chatHeader.innerHTML = `<h2>💬 ${name}</h2>`;
+    
+    elements.chatHeader.innerHTML = `
+        <h2>💬 ${name}</h2>
+        <button id="clearChatBtn" class="clear-chat-btn" title="Clear Chat History">🧹 Clear Chat</button>
+    `;
+    
+    // Bind event listener to new button
+    document.getElementById('clearChatBtn').addEventListener('click', clearChatHistoryUI);
+    
     elements.chatMessages.innerHTML = `
         <div class="empty-state">
-            <div class="icon">💬</div>
-            <p>Start a conversation with your documents</p>
+            <div class="icon">⏳</div>
+            <p>Loading history...</p>
         </div>
     `;
     elements.chatInputContainer.style.display = 'flex';
@@ -249,6 +269,37 @@ function selectCollection(name) {
 
     // Load documents for this collection
     loadDocuments();
+    
+    // Load chat history
+    try {
+        const historyData = await API.getChatHistory(name);
+        if (historyData && historyData.history && historyData.history.length > 0) {
+            state.messages = historyData.history;
+        } else {
+            state.messages = [];
+        }
+        renderMessages();
+    } catch (err) {
+        console.error("Failed to load history", err);
+        state.messages = [];
+        renderMessages();
+    }
+}
+
+async function clearChatHistoryUI() {
+    if (!state.activeCollection) return;
+    
+    if (!confirm("Are you sure you want to clear the chat history for this collection?")) return;
+    
+    try {
+        await API.clearChatHistory(state.activeCollection);
+        state.messages = [];
+        state.retrievedDocs = [];
+        renderMessages();
+    } catch (err) {
+        console.error("Failed to clear history", err);
+        alert("Failed to clear chat history.");
+    }
 }
 
 async function createCollection() {
@@ -397,6 +448,12 @@ function renderJobs() {
         
         let statusIcon = '';
         let statusClass = '';
+        let traceBtn = '';
+        
+        if (job.status === 'completed' && job.trace_id) {
+            traceBtn = `<button class="trace-btn" data-trace-id="${job.trace_id}" title="Copy trace ID & open Phoenix">🔍</button>`;
+        }
+
         switch (job.status) {
             case 'queued':
             case 'processing':
@@ -404,7 +461,7 @@ function renderJobs() {
                 statusClass = 'status-processing';
                 break;
             case 'completed':
-                statusIcon = '✅';
+                statusIcon = `✅ ${traceBtn}`;
                 statusClass = 'status-completed';
                 break;
             case 'failed':
@@ -422,12 +479,38 @@ function renderJobs() {
                 <span class="status ${statusClass}">${statusIcon}</span>
             `;
             elements.jobsList.appendChild(item);
+            
+            // Add trace button click handler if it exists
+            const btn = item.querySelector('.trace-btn');
+            if (btn) {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const traceId = btn.dataset.traceId;
+                    navigator.clipboard.writeText(traceId);
+                    window.open('http://localhost:6006', '_blank');
+                    btn.textContent = '✅';
+                    setTimeout(() => { btn.textContent = '🔍'; }, 2000);
+                });
+            }
         } else {
             const statusSpan = jobEl.querySelector('.status');
             // Only update if status class changed to avoid restarting animation
             if (!statusSpan.classList.contains(statusClass)) {
                 statusSpan.className = `status ${statusClass}`;
                 statusSpan.innerHTML = statusIcon;
+                
+                // Add trace button click handler if it exists
+                const btn = jobEl.querySelector('.trace-btn');
+                if (btn) {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const traceId = btn.dataset.traceId;
+                        navigator.clipboard.writeText(traceId);
+                        window.open('http://localhost:6006', '_blank');
+                        btn.textContent = '✅';
+                        setTimeout(() => { btn.textContent = '🔍'; }, 2000);
+                    });
+                }
             }
         }
     });
@@ -439,6 +522,12 @@ async function pollJobStatus(jobId) {
             const status = await API.getJobStatus(jobId);
             state.jobs[jobId].status = status.status;
             state.jobs[jobId].message = status.message;
+            
+            // Critical fix: map trace_id from the backend response so renderJobs can display the button
+            if (status.trace_id) {
+                state.jobs[jobId].trace_id = status.trace_id;
+            }
+            
             renderJobs();
 
             if (status.status === 'queued' || status.status === 'processing') {

@@ -22,7 +22,7 @@ langgraph-checkpoint-postgres
 psycopg[binary,pool]
 
 # Vector database
-weaviate-client==4.10.2
+weaviate-client
 
 # Document processing
 pdfminer.six==20231228
