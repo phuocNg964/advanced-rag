@@ -6,8 +6,8 @@ llms:
     model_kwargs:
       top_p: 0.95
     max_retries: 3
-    fallbacks:
-      - backup_generator
+    # fallbacks:
+    #   - backup_generator
       
   backup_generator:
     provider: openai
@@ -18,7 +18,7 @@ llms:
   rewriter:
     provider: groq
     model: llama-3.1-8b-instant
-    temperature: 0.2
+    temperature: 0.1
     model_kwargs:
       top_p: 0.95
     max_retries: 2
@@ -32,7 +32,7 @@ llms:
   image_summarizer:
     provider: groq
     model: meta-llama/llama-4-scout-17b-16e-instruct
-    temperature: 0.3
+    temperature: 0.2
     model_kwargs:
-      top_p: 0.95
+      top_p: 0.90
     max_retries: 3

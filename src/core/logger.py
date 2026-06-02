@@ -16,7 +16,7 @@ class ProjectOnlyFilter(logging.Filter):
         return record.name.startswith(PROJECT_PREFIX)
 
 
-def setup_logging(level: int = logging.INFO) -> None:
+def setup_logging(level: int = logging.INFO, log_file: str = None) -> None:
     """
     Configure logging to only show your project's logs.
     All third-party library logs are automatically hidden.
@@ -33,11 +33,20 @@ def setup_logging(level: int = logging.INFO) -> None:
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
     
-    # Add handler with project-only filter
+    # Add console handler with project-only filter
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     console_handler.addFilter(ProjectOnlyFilter())
     root_logger.addHandler(console_handler)
+
+    # Add file handler with project-only filter if specified
+    if log_file:
+        import os
+        os.makedirs(os.path.dirname(log_file) or ".", exist_ok=True)
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        file_handler.addFilter(ProjectOnlyFilter())
+        root_logger.addHandler(file_handler)
 
 
 def get_logger(name: str) -> logging.Logger:

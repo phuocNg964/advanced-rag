@@ -1,0 +1,9 @@
+metric,score
+context_recall,1.0000
+context_precision,0.9757
+faithfulness,0.9714
+answer_relevancy,0.8099
+
+question_type,count,context_recall,context_precision,faithfulness,answer_relevancy
+fact_retrieval,4,1.0000,0.9696,0.9643,0.8367
+table_extraction,1,1.0000,1.0000,1.0000,0.7026

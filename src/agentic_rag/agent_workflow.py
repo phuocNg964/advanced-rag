@@ -22,9 +22,35 @@ from src.prompts.prompts import ROUTER_PROMPT, QUERY_RESOLVER_PROMPT, QUERY_DECO
 
 from src.core.telemetry import get_current_trace_id
 from opentelemetry import trace
+import asyncio
+from functools import wraps
+try:
+    from openinference.semconv.trace import SpanAttributes
+    SPAN_KIND = SpanAttributes.OPENINFERENCE_SPAN_KIND
+except ImportError:
+    SPAN_KIND = "openinference.span.kind"
 
 logger = get_logger(__name__)
 _settings = get_settings()
+tracer = trace.get_tracer(__name__)
+
+def trace_step(name, kind="CHAIN"):
+    def decorator(func):
+        if asyncio.iscoroutinefunction(func):
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                with tracer.start_as_current_span(name) as span:
+                    span.set_attribute(SPAN_KIND, kind)
+                    return await func(*args, **kwargs)
+            return async_wrapper
+        else:
+            @wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                with tracer.start_as_current_span(name) as span:
+                    span.set_attribute(SPAN_KIND, kind)
+                    return func(*args, **kwargs)
+            return sync_wrapper
+    return decorator
 
 class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], operator.add]
@@ -32,7 +58,7 @@ class AgentState(TypedDict):
     intention: Literal["GENERAL", "RAG"]
     collection_name: str  
     resolved_query: str
-    rewritten_queries: List[str]
+    decomposed_queries: List[str]
     retrieved_documents: List[Any]
 
 class AgenticRAG:
@@ -109,6 +135,7 @@ class AgenticRAG:
 
         return builder
 
+    @trace_step("intent_router")
     def intent_router(self, state: AgentState):
         """Classify safe queries as RAG or GENERAL."""
         query = state.get('query', '')
@@ -132,6 +159,7 @@ class AgenticRAG:
         logger.info(f"Router classified intent as: {intention}")
         return {'intention': intention}
 
+    @trace_step("general_llm")
     def general_llm(self, state: AgentState):
         """Handle standard conversational inputs that require no documents."""
         query = state['query']
@@ -148,6 +176,7 @@ class AgenticRAG:
             'messages': [HumanMessage(content=query), response]
         }
 
+    @trace_step("query_resolver")
     def query_resolver(self, state: AgentState):
         """Resolve references and remove filler from query"""
         query = state.get('query', '')
@@ -173,6 +202,9 @@ class AgenticRAG:
         try:
             raw_response = self.llm_rewriter.invoke(messages)
             resolved_query = raw_response.content.strip()
+            if not resolved_query:
+                logger.warning("LLM returned empty resolved query. Falling back to original query.")
+                resolved_query = query
         except Exception as e:
             logger.warning(f"Query resolving failed: {e}. Using original query.")
             resolved_query = query
@@ -180,6 +212,7 @@ class AgenticRAG:
         logger.info(f"Resolved query: {resolved_query}")
         return {'resolved_query': resolved_query}
 
+    @trace_step("query_decomposer")
     def query_decomposer(self, state: AgentState):
         """Decompose query into sub-queries if necessary"""
         resolved_query = state.get('resolved_query', state.get('query', ''))
@@ -200,6 +233,9 @@ class AgenticRAG:
             if match:
                 queries = json.loads(match.group())
                 queries = [str(q) for q in queries if q][:3]
+                if not queries:
+                    logger.warning("LLM returned empty queries list. Falling back to resolved query.")
+                    queries = [resolved_query]
             else:
                 raise ValueError(f"No JSON array found in response: {text[:200]}")
             
@@ -208,12 +244,13 @@ class AgenticRAG:
             queries = [resolved_query]
         
         logger.info(f"Decomposed queries: {queries}")
-        return {'rewritten_queries': queries}
+        return {'decomposed_queries': queries}
     
+    @trace_step("retriever", kind="RETRIEVER")
     def retriever(self, state: AgentState):
         """Execute retrieval plan"""
         
-        queries = state.get('rewritten_queries', [])
+        queries = state.get('decomposed_queries', [])
         collection_name = state.get('collection_name', '')
         all_docs = []
         seen_ids = set()  # Track seen document IDs
@@ -256,9 +293,11 @@ class AgenticRAG:
 
     def _build_rag_messages(self, query: str, retrieved_documents: list) -> list:
         """Build the prompt messages for RAG generation (shared by generator and stream_generate)."""
-        user_prompt = [
+        has_images = False
+        user_prompt_list = [
             {"type": "text", "text": "Documents: \n\n"},
         ]
+        user_prompt_str = "Documents: \n\n"
 
         # Format retrieved documents 
         for i, doc in enumerate(retrieved_documents, 1):
@@ -273,30 +312,39 @@ class AgenticRAG:
                 image_path = props.get('image_path', '')
                 caption = props.get('caption', 'no description available')
                 text_part = f"[{i}] [{'IMAGE' if doc_type == 'Image' else 'TABLE'}] {caption}\n(Source: {source_ref})\n"
-                user_prompt.append({'type': 'text', 'text': text_part})
+                
+                user_prompt_list.append({'type': 'text', 'text': text_part})
+                user_prompt_str += text_part
 
                 base64_img = to_base64(image_path)
                 if base64_img:
-                    user_prompt.append({
+                    has_images = True
+                    user_prompt_list.append({
                         'type': 'image_url',
                         'image_url': {'url': f'data:image/png;base64,{base64_img}'}
                     })
             # Configure text chunks
             else:
                 text_part = f"[{i}] {props.get('text', '')}\n(Source: {source_ref})\n"
-                user_prompt.append({'type': 'text', 'text': text_part})
+                user_prompt_list.append({'type': 'text', 'text': text_part})
+                user_prompt_str += text_part
             
-            user_prompt.append({'type': 'text', 'text': '---\n'})
+            user_prompt_list.append({'type': 'text', 'text': '---\n'})
+            user_prompt_str += '---\n'
         
-        user_prompt.append({'type': 'text', 'text': f"Question:\n{query}"})
+        user_prompt_list.append({'type': 'text', 'text': f"Question:\n{query}"})
+        user_prompt_str += f"Question:\n{query}"
 
         rag_prompt = GENERATOR_PROMPT
         
+        final_content = user_prompt_list if has_images else user_prompt_str
+        
         return [
             SystemMessage(content=rag_prompt),
-            HumanMessage(content=user_prompt)
+            HumanMessage(content=final_content)
         ]
 
+    @trace_step("rag_generator")
     async def rag_generator(self, state: AgentState) -> dict:
         """Generator aggregates retrieved documents (streaming)."""       
         query = state['query']
