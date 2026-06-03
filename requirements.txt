@@ -4,6 +4,7 @@ uvicorn==0.38.0
 python-multipart==0.0.21
 pydantic==2.12.4
 pydantic-settings==2.7.1
+python-dotenv>=1.0.0
 
 # LangChain ecosystem
 langchain-core>=0.3.17

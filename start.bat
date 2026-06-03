@@ -7,7 +7,6 @@ echo.
 echo [1/3] Creating necessary directories...
 if not exist "data\raw" mkdir "data\raw"
 if not exist "data\processed" mkdir "data\processed"
-if not exist "collections" mkdir "collections"
 
 echo.
 echo [2/3] Checking environment configuration...
@@ -24,7 +23,8 @@ if not exist ".env" (
 
 echo.
 echo [3/3] Starting Docker containers (this may take a while on first run)...
-docker compose up -d --build
+echo     Using CPU profile. For GPU, edit this script to use --profile gpu
+docker compose --profile cpu up -d
 
 echo.
 echo =========================================
@@ -33,6 +33,6 @@ echo =========================================
 echo Your Agentic RAG system is starting up in the background.
 echo It may take a minute or two for all AI models to load.
 echo.
-echo 🌐 Access the UI and API here: http://localhost:8000
+echo Access the UI and API here: http://localhost:8000
 echo =========================================
 pause
