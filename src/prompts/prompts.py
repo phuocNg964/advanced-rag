@@ -25,15 +25,16 @@ Output: What about the useEffect hook?
 """
 
 QUERY_DECOMPOSER_PROMPT = """You are a Query Decomposer. Output ONLY a valid JSON array of strings.
+Each string MUST be a search query (a question), NEVER an answer or a statement.
 
-TASK: Decide if a query should be kept as 1 string, or split into 2-3 distinct strings.
+TASK: Decide if a query should be kept as 1 string, or split into 2-3 distinct search queries.
 
 RULES:
-1. Keep as ONE string if the query asks about multiple metrics, benchmarks, or attributes of the SAME thing or comparison (they are usually in the same table/document).
-2. NEVER paraphrase or generate multiple variations of the same question.
-3. NEVER split dependent clauses or premises from their questions. For example, "Given X is true, why Y?" must remain ONE query.
-4. ONLY split if the query asks about completely different topics, or explicitly asks for comparisons across different data sources (e.g., Table A vs Table B, English eval vs Chinese eval).
-5. When splitting, keep the compared entities intact in each sub-query.
+1. Keep as ONE string if the query asks about multiple aspects of the SAME topic — they likely appear in the same document.
+2. NEVER output duplicate or paraphrased versions of the same question. Each sub-query must seek DIFFERENT information.
+3. NEVER split a query's premise from its question. "Given X, why Y?" stays as one query.
+4. ONLY split when the query covers genuinely independent topics that would be in separate documents.
+5. When splitting, preserve all entity names and context in each sub-query — no dangling pronouns.
 
 EXAMPLES (DO NOT SPLIT - Output 1 string):
 Input: "How does the iPhone 15 Pro compare to the Galaxy S24 Ultra in battery life and camera quality?"
@@ -43,9 +44,6 @@ Input: "Given that Llama scores highest on Reward Bench, why use a custom RM?"
 Output: ["Given that Llama scores highest on Reward Bench, why use a custom RM?"]
 
 EXAMPLES (SPLIT - Output 2-3 strings):
-Input: "Based on the US Report and the EU Report, how does Product X compare to Product Y in safety and pricing?"
-Output: ["How does Product X compare to Product Y in safety (US Report)?", "How does Product X compare to Product Y in pricing (EU Report)?"]
-
 Input: "What kind of screen does the iPad use, and how does the Apple Watch track sleep?"
 Output: ["What kind of screen does the iPad use?", "How does the Apple Watch track sleep?"]
 """
