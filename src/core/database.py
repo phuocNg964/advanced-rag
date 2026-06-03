@@ -1,15 +1,13 @@
-import weaviate
-import shutil
-from pathlib import Path
 from weaviate.classes.config import Configure, Property, DataType
-from typing import Optional
 from weaviate.classes.query import Filter
+import shutil
 from src.core.logger import get_logger
 from src.core.config import Settings, get_settings
 
 logger = get_logger(__name__)
 
 from src.core.weaviate_client import get_weaviate_client
+
 
 class CollectionService:
     """Service for managing Weaviate collections."""
@@ -24,47 +22,72 @@ class CollectionService:
         try:
             if self.client.collections.exists(collection_name):
                 logger.info(f"Collection '{collection_name}' already exists")
-                return 'Collection already exists'
-            
+                return "Collection already exists"
+
             self.client.collections.create(
                 name=collection_name,
                 vectorizer_config=Configure.Vectorizer.text2vec_transformers(),
                 reranker_config=Configure.Reranker.transformers(),
                 properties=[
-                    Property(name='text', data_type=DataType.TEXT, skip_vectorization=False),
-                    Property(name='chunk_id', data_type=DataType.TEXT, skip_vectorization=True),
-                    Property(name='type', data_type=DataType.TEXT, skip_vectorization=True),
-                    Property(name='source', data_type=DataType.TEXT, skip_vectorization=False),
-                    Property(name='image_path', data_type=DataType.TEXT, skip_vectorization=True),
-                    Property(name='caption', data_type=DataType.TEXT, skip_vectorization=False),
-                    Property(name='page_number', data_type=DataType.INT, skip_vectorization=True),
-                ]
+                    Property(
+                        name="text", data_type=DataType.TEXT, skip_vectorization=False
+                    ),
+                    Property(
+                        name="chunk_id",
+                        data_type=DataType.TEXT,
+                        skip_vectorization=True,
+                    ),
+                    Property(
+                        name="type", data_type=DataType.TEXT, skip_vectorization=True
+                    ),
+                    Property(
+                        name="source", data_type=DataType.TEXT, skip_vectorization=False
+                    ),
+                    Property(
+                        name="image_path",
+                        data_type=DataType.TEXT,
+                        skip_vectorization=True,
+                    ),
+                    Property(
+                        name="caption",
+                        data_type=DataType.TEXT,
+                        skip_vectorization=False,
+                    ),
+                    Property(
+                        name="page_number",
+                        data_type=DataType.INT,
+                        skip_vectorization=True,
+                    ),
+                ],
             )
             # Create collection folders
             raw_dir = self.settings.base_dir / "data" / "raw" / collection_name
-            processed_dir = self.settings.base_dir / "data" / "processed" / collection_name
+            processed_dir = (
+                self.settings.base_dir / "data" / "processed" / collection_name
+            )
             raw_dir.mkdir(parents=True, exist_ok=True)
             processed_dir.mkdir(parents=True, exist_ok=True)
 
             logger.info(f"Collection '{collection_name}' created successfully")
-            return 'Collection created successfully'
+            return "Collection created successfully"
 
         except Exception as e:
             logger.error(f"Failed to create collection: {e}")
-            return 'Failed to create collection'
+            return "Failed to create collection"
 
     def delete_collection(self, collection_name: str):
         """Delete a Weaviate collection and its data folders."""
 
-
         if not self.client.collections.exists(collection_name):
             logger.info(f"Collection '{collection_name}' does not exist")
-            return 'Collection does not exist'
-        
+            return "Collection does not exist"
+
         self.client.collections.delete(collection_name)
-        
-        logger.info(f"Collection '{collection_name}' deleted from Weaviate successfully")
-        return 'Collection deleted successfully'
+
+        logger.info(
+            f"Collection '{collection_name}' deleted from Weaviate successfully"
+        )
+        return "Collection deleted successfully"
 
     def delete_collection_files(self, collection_name: str):
         """Delete collection folders from disk. Can be run in background."""
@@ -82,13 +105,15 @@ class CollectionService:
             collection = self.client.collections.get(collection_name)
 
             collection.data.delete_many(
-                where=Filter.by_property('source').equal(f"{collection_name}/{file_document}")
+                where=Filter.by_property("source").equal(
+                    f"{collection_name}/{file_document}"
+                )
             )
             logger.info(f"Document '{file_document}' deleted from collection")
-            
+
             # Delete files from filesystem
             self._delete_document_files(collection_name, file_document)
-            
+
             return f"Document '{file_document}' deleted successfully"
 
         except Exception as e:
@@ -98,14 +123,24 @@ class CollectionService:
     def _delete_document_files(self, collection_name: str, file_document: str):
         """Delete document files from collection's data folders."""
         # Delete PDF from data/raw/{collection}
-        raw_file = self.settings.base_dir / "data" / "raw" / collection_name / file_document
+        raw_file = (
+            self.settings.base_dir / "data" / "raw" / collection_name / file_document
+        )
         if raw_file.exists():
             raw_file.unlink()
             logger.info(f"Deleted raw file: {raw_file}")
-        
+
         # Delete processed folder (images/tables extracted from PDF)
-        folder_name = file_document.rsplit('.', 1)[0] if '.' in file_document else file_document
-        processed_folder = self.settings.base_dir / "data" / "processed" / collection_name / folder_name
+        folder_name = (
+            file_document.rsplit(".", 1)[0] if "." in file_document else file_document
+        )
+        processed_folder = (
+            self.settings.base_dir
+            / "data"
+            / "processed"
+            / collection_name
+            / folder_name
+        )
         if processed_folder.exists() and processed_folder.is_dir():
             shutil.rmtree(processed_folder)
             logger.info(f"Deleted processed folder: {processed_folder}")
@@ -113,19 +148,17 @@ class CollectionService:
     def get_documents(self, collection_name: str):
         """Get list of documents in collection's data/raw folder."""
         raw_dir = self.settings.base_dir / "data" / "raw" / collection_name
-        
+
         documents = []
         if raw_dir.exists():
             for file_path in raw_dir.iterdir():
-                if file_path.is_file() and file_path.suffix.lower() == '.pdf':
-                    documents.append({
-                        "filename": file_path.name,
-                        "source": str(file_path)
-                    })
-        
+                if file_path.is_file() and file_path.suffix.lower() == ".pdf":
+                    documents.append(
+                        {"filename": file_path.name, "source": str(file_path)}
+                    )
+
         return documents
 
     def get_all_collections(self):
         """List all Weaviate collections."""
         return self.client.collections.list_all()
-

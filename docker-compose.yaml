@@ -27,9 +27,9 @@ services:
       TRANSFORMERS_INFERENCE_API: 'http://text2vec-transformers:8080'
       RERANKER_INFERENCE_API: 'http://reranker-transformers:8080'
 
-      # Keys (load from .env file)
-      OPENAI_APIKEY: ${OPENAI_API_KEY}
-      GOOGLE_APIKEY: ${GEMINI_API_KEY}
+      # Keys (load from .env file, use empty default if not set)
+      OPENAI_APIKEY: ${OPENAI_API_KEY:-""}
+      GOOGLE_APIKEY: ${GEMINI_API_KEY:-""}
 
       # Optimization
       QUERY_DEFAULTS_LIMIT: 25
@@ -101,9 +101,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: postgres # Match your config
-      POSTGRES_PASSWORD: phuoc123 # Match your config
-      POSTGRES_DB: agentic-rag # Match your config
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-agentic-rag}
     ports:
       - "5432:5432" # Standard internal port
     volumes:

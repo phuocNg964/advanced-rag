@@ -1,4 +1,0 @@
-# Application-wide settings
-app_name: "Agentic RAG"
-version: "1.0.0"
-environment: "development"

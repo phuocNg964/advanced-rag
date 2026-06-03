@@ -8,6 +8,7 @@ from src.core.config import get_settings
 logger = get_logger(__name__)
 tracer = trace.get_tracer(__name__)
 
+
 def retrieve(
     query: str,
     collection_name: str,
@@ -16,9 +17,9 @@ def retrieve(
     alpha: float = 0.5,
     top_k_reranker: int = 5,
     client: Optional[weaviate.WeaviateClient] = None,
-    ) -> List:
+) -> List:
     """Perform hybrid search with optional reranking and metadata filtering.
-    
+
     Args:
         query: Search query string
         collection_name: Weaviate collection name
@@ -44,44 +45,46 @@ def retrieve(
                 settings = get_settings()
                 client = weaviate.connect_to_local(
                     host=settings.weaviate_host,
-                    port=settings.weaviate_http_port, 
-                    grpc_port=settings.weaviate_grpc_port
+                    port=settings.weaviate_http_port,
+                    grpc_port=settings.weaviate_grpc_port,
                 )
-                
+
             collection = client.collections.get(collection_name)
-            
-            # Metadata filtering 
+
+            # Metadata filtering
             search_filter = None
             if metadata:
-                filter_list = [Filter.by_property(key).contains_any([value]) for key, value in metadata.items()]
+                filter_list = [
+                    Filter.by_property(key).contains_any([value])
+                    for key, value in metadata.items()
+                ]
                 search_filter = Filter.any_of(filter_list)
-            
+
             # Hybrid search
             results = collection.query.hybrid(
                 query=query,
                 filters=search_filter,
                 alpha=alpha,
                 limit=top_k,
-                rerank=Rerank(
-                    prop='text',
-                    query=query
-                ) if top_k_reranker else None,
+                rerank=Rerank(prop="text", query=query) if top_k_reranker else None,
                 return_metadata=MetadataQuery(score=True, distance=True),
             )
-            final_results = results.objects[:top_k_reranker] if top_k_reranker else results.objects
+            final_results = (
+                results.objects[:top_k_reranker] if top_k_reranker else results.objects
+            )
 
             # Record retrieval outcome
             span.set_attribute("retriever.results_count", len(final_results))
 
             logger.info(f"Retrieved {len(final_results)} results successfully")
             return final_results
-        
+
         except Exception as e:
             span.set_attribute("retriever.error", str(e))
             span.record_exception(e)
             logger.error(f"Retrieval failed: {e}")
             return []
-        
+
         finally:
             if owns_client and client is not None:
                 client.close()

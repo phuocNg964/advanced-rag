@@ -1,5 +1,4 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from src.core.database import CollectionService
 from src.core.logger import get_logger
 
@@ -7,6 +6,7 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 from src.api.schemas.collections import CollectionCreate
+
 
 @router.post("")
 async def create_collection(request: CollectionCreate):
@@ -19,7 +19,8 @@ async def create_collection(request: CollectionCreate):
         logger.error(f"Failed to create collection: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+
+
 
 @router.delete("/{name}")
 async def delete_collection(name: str, background_tasks: BackgroundTasks):
@@ -34,6 +35,7 @@ async def delete_collection(name: str, background_tasks: BackgroundTasks):
         logger.error(f"Failed to delete collection: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("")
 async def list_collections():
     """List all Weaviate collections."""
@@ -45,6 +47,7 @@ async def list_collections():
         logger.error(f"Failed to list collections: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/{collection_name}/documents")
 async def list_documents(collection_name: str):
     """List all documents in a collection."""
@@ -55,6 +58,7 @@ async def list_documents(collection_name: str):
     except Exception as e:
         logger.error(f"Failed to list documents: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.delete("/{collection_name}/documents/{document_name}")
 async def delete_document(collection_name: str, document_name: str):

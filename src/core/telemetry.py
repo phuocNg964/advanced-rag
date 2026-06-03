@@ -4,18 +4,19 @@ Phoenix observability tracing setup.
 Initializes OpenTelemetry tracing with Phoenix as the collector backend.
 Auto-instruments all LangChain/LangGraph calls when enabled.
 """
+
 import os
 import logging
 from dotenv import load_dotenv
 from phoenix.otel import register
 from opentelemetry import trace as otel_trace
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 # Ensure .env is loaded so os.getenv can read it
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 _tracing_enabled = False
+
 
 def init_tracing():
     """
@@ -32,10 +33,10 @@ def init_tracing():
         logger.info("PHOENIX_COLLECTOR_ENDPOINT not set — tracing disabled.")
         return
     try:
-        tracer_provider = register(
+        register(
             project_name="agentic-rag",
             auto_instrument=True,  # Auto-patches langchain-core, openai, etc.
-            batch=True,            # Uses BatchSpanProcessor to avoid warnings and improve perf
+            batch=True,  # Uses BatchSpanProcessor to avoid warnings and improve perf
         )
         _tracing_enabled = True
         logger.info(f"Phoenix tracing enabled → {endpoint}")
@@ -48,9 +49,6 @@ def init_tracing():
         logger.error(f"Failed to initialize Phoenix tracing: {e}")
 
 
-def is_tracing_enabled() -> bool:
-    """Check if tracing is currently active."""
-    return _tracing_enabled
 
 
 def get_current_trace_id() -> str | None:
