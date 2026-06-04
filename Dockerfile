@@ -11,9 +11,14 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Install python dependencies
+# Allow users to override the PyTorch index (e.g., to empty string for CUDA) if they run the API with GPU
+ARG PIP_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cpu"
+
+# Install python dependencies (timeout increased for stability on slow connections)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --default-timeout=100 \
+    --extra-index-url ${PIP_EXTRA_INDEX_URL} \
+    -r requirements.txt
 
 # Copy the rest of the application
 COPY . .

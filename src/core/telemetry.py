@@ -8,7 +8,6 @@ Auto-instruments all LangChain/LangGraph calls when enabled.
 import os
 import logging
 from dotenv import load_dotenv
-from phoenix.otel import register
 from opentelemetry import trace as otel_trace
 
 # Ensure .env is loaded so os.getenv can read it
@@ -33,6 +32,7 @@ def init_tracing():
         logger.info("PHOENIX_COLLECTOR_ENDPOINT not set — tracing disabled.")
         return
     try:
+        from phoenix.otel import register
         register(
             project_name="agentic-rag",
             auto_instrument=True,  # Auto-patches langchain-core, openai, etc.
