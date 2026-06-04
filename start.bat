@@ -24,7 +24,7 @@ if not exist ".env" (
 echo.
 echo [3/3] Starting Docker containers (this may take a while on first run)...
 echo     Using CPU profile. For GPU, edit this script to use --profile gpu
-docker compose --profile cpu up -d
+docker compose --profile cpu --profile production up -d --build
 
 echo.
 echo =========================================

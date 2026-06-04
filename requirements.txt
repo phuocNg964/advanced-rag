@@ -7,14 +7,10 @@ pydantic-settings==2.7.1
 python-dotenv>=1.0.0
 
 # LangChain ecosystem
-langchain-core>=0.3.17
-langchain-text-splitters==0.3.2
 langchain==0.3.7
 langchain-google-genai==2.0.5
 langchain-groq
-langchain-openai==0.2.7
-openai>=1.55.0
-httpx>=0.28.1
+langchain-openai>=0.2.7
 pyyaml>=6.0.1
 
 # LangGraph for agents
@@ -26,22 +22,12 @@ psycopg[binary,pool]
 weaviate-client
 
 # Document processing
-pdfminer.six==20231228
 unstructured[pdf]==0.16.12
+pdfminer.six==20231228
 python-magic==0.4.27
 
-# Required transitive dependencies
-numpy==1.26.4
-protobuf==5.29.6
-grpcio==1.71.2
-grpcio-tools==1.71.2
-requests==2.32.5
-tqdm==4.67.1
-
-# Observability (Phoenix Tracing)
+# Observability (Phoenix Tracing — lightweight, no torch/CUDA)
 arize-phoenix-otel
-arize-phoenix
 openinference-instrumentation-langchain
 opentelemetry-api
 opentelemetry-instrumentation-weaviate
-pandas>=2.0.0
