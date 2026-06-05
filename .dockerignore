@@ -47,3 +47,29 @@ models/
 # Logs
 *.log
 logs/
+
+# Documentation and CI/CD
+docs/
+.github/
+
+# Testing and Evaluation
+evals/
+tests/
+.pytest_cache/
+
+# Docker Configs
+Dockerfile
+.dockerignore
+docker-compose.yaml
+
+# Documentation & Meta
+README.md
+LICENSE
+
+# Scripts
+start.bat
+start.sh
+
+# Redundant Requirements
+requirements.txt
+requirements-dev.txt
