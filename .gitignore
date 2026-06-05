@@ -52,7 +52,7 @@ tmp/
 collections/
 *.pdf
 *.docx
-data/
+data/*
 !data/gold/
 
 # Model Cache

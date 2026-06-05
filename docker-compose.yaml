@@ -132,13 +132,17 @@ services:
       - PG_HOST=postgres
       - WEAVIATE_HOST=weaviate
       - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:4317
+      - HF_HUB_OFFLINE=1
     volumes:
-      - ./data:/app/data
+      - ./data/raw:/app/data/raw        # bind mount: user drops PDFs here from Windows
+      - processed_data:/app/data/processed  # named volume: fast Linux-only I/O for extracted images
+      - ./src:/app/src                  # bind mount: hot reload source code
     deploy:
       resources:
         limits:
-          memory: 4G
-          cpus: '4.0'
+          memory: 6G
+        reservations:
+          memory: 2G
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
@@ -151,4 +155,6 @@ services:
 
 volumes:
   phoenix_data:
+    driver: local
+  processed_data:    # lives inside WSL2 VM — no Windows bridge, fast small-file I/O
     driver: local

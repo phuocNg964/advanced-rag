@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import List, Optional
 from pdfminer.pdfpage import PDFPage
 
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+
 import weaviate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
@@ -17,7 +19,7 @@ from src.core.logger import get_logger
 from src.components.parser import attach_captions, to_base64
 from src.prompts.prompts import IMAGE_SUMMARIZER_PROMPT
 
-from opentelemetry import trace
+from opentelemetry import trace, context
 
 logger = get_logger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -59,6 +61,12 @@ class IngestService:
             )
         return self._client
 
+    @staticmethod
+    def _is_rate_limit_error(exc: Exception) -> bool:
+        """Return True if the exception signals an API rate limit (429)."""
+        msg = str(exc).lower()
+        return "429" in msg or "rate limit" in msg or "resource_exhausted" in msg
+
     def _summarize_image(self, chunk: dict) -> dict:
         """Summarize an image chunk using LLM vision."""
         with tracer.start_as_current_span("summarize_single_image") as span:
@@ -87,9 +95,20 @@ class IngestService:
                     }
                 ]
 
-                # Create messages and invoke LLM
+                # Invoke LLM with automatic retry only on actual 429 / rate-limit errors.
+                # Waits 3s then doubles up to 30s per attempt; gives up after 4 retries.
                 human_message = HumanMessage(content=content)
-                response = self._summarizer_llm.invoke([system_message, human_message])
+
+                @retry(
+                    retry=retry_if_exception(self._is_rate_limit_error),
+                    wait=wait_exponential(multiplier=1, min=3, max=30),
+                    stop=stop_after_attempt(4),
+                    reraise=True,
+                )
+                def _call_llm():
+                    return self._summarizer_llm.invoke([system_message, human_message])
+
+                response = _call_llm()
                 summary = response.content.strip()
                 chunk["text"] = f"{caption}\n\n{summary}"
                 logger.info(f"Generated summary for image: {img_path}")
@@ -149,7 +168,7 @@ class IngestService:
                         filename=file_path,
                         strategy=strategy,
                         # hi_res_model_name="yolox_quantized",   # Faster model -> less accuracy extract elements
-                        pdf_image_dpi=150,  # Lower resolution (before 200)
+                        pdf_image_dpi=100,  # Lower resolution (before 200)
                         ocr_mode="individual_blocks",  # Skip full-page OCR (not scanned PDF)
                         extract_image_block_types=["Image", "Table"],
                         extract_image_block_to_payload=False,
@@ -172,7 +191,7 @@ class IngestService:
                         ):
                             Path(ele.metadata.image_path).unlink(missing_ok=True)
                             continue
-                    if len(d.get("text", "")) <= 2:
+                    if etype not in ["Image", "Table"] and len(d.get("text", "")) <= 2:
                         continue
                     significant_elements.append(ele)
 
@@ -202,17 +221,25 @@ class IngestService:
                     ) as sum_all_span:
                         sum_all_span.set_attribute("image_count", len(image_chunks))
                         logger.info(
-                            f"Summarizing {len(image_chunks)} images sequentially with a delay to respect rate limits..."
+                            f"Summarizing {len(image_chunks)} images concurrently (max 5 workers)..."
                         )
 
-                        import time
+                        with ThreadPoolExecutor(max_workers=5) as executor:
+                            current_context = context.get_current()
 
-                        for i, chunk in enumerate(image_chunks):
-                            self._summarize_image(chunk)
-                            if i < len(image_chunks) - 1:
-                                time.sleep(
-                                    3
-                                )  # 3-second delay between requests to help avoid 429 Rate Limit
+                            def _summarize_with_context(chunk, ctx):
+                                token = context.attach(ctx)
+                                try:
+                                    return self._summarize_image(chunk)
+                                finally:
+                                    context.detach(token)
+
+                            futures = [
+                                executor.submit(_summarize_with_context, chunk, current_context)
+                                for chunk in image_chunks
+                            ]
+                            for future in as_completed(futures):
+                                future.result()  # re-raises any exception from _summarize_image
 
                 # Build multimodal documents from images and tables
                 multimodal_documents = []

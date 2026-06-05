@@ -363,7 +363,8 @@ alpha = 0.6          # Hybrid weight (0 = keyword only, 1 = vector only)
 ├── Dockerfile                       # API container for production
 ├── main.py                          # Entry point
 ├── start.sh / start.bat             # One-command Docker setup
-├── requirements.txt                 # Production dependencies
+├── requirements.txt                 # High-level dependencies (developer-facing)
+├── requirements.lock                # Exact locked versions for Docker builds
 ├── requirements-dev.txt             # Evaluation dependencies
 └── .env.example                     # Environment variable template
 ```
