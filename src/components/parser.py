@@ -58,29 +58,38 @@ def _is_caption(element) -> bool:
 
 def _find_caption(elements, visual_idx: int, visual_type: str, window: int = 3):
     """
-    Find a caption for a visual element, looking in the correct direction:
-      - Image: look AFTER (captions appear below images)
-      - Table: look BEFORE (captions appear above tables)
-
-    Returns (caption_idx, caption_text) or (None, None).
+    Find a caption for a visual element, searching both above and below.
+    Prioritizes academic conventions first (Image=Below, Table=Above),
+    but falls back to the opposite direction for inconsistent formatting.
+    Stops searching if another visual element is hit to prevent stealing captions.
     """
     n = len(elements)
 
-    if visual_type == "Image":
-        # Look forward (caption is below image)
-        for offset in range(1, window + 1):
-            i = visual_idx + offset
-            if i < n and _is_caption(elements[i]):
-                return i, elements[i].to_dict().get("text", "").strip()
+    # Academic conventions: Images -> look forward (1), Tables -> look backward (-1)
+    primary_dir = 1 if visual_type == "Image" else -1
+    secondary_dir = -1 if visual_type == "Image" else 1
 
-    elif visual_type == "Table":
-        # Look backward (caption is above table)
+    def search_direction(direction):
         for offset in range(1, window + 1):
-            i = visual_idx - offset
-            if i >= 0 and _is_caption(elements[i]):
+            i = visual_idx + (offset * direction)
+            if not (0 <= i < n):
+                break
+            
+            # Prevent stealing captions from other visual elements
+            if elements[i].to_dict().get("type") in VISUAL_TYPES:
+                break
+                
+            if _is_caption(elements[i]):
                 return i, elements[i].to_dict().get("text", "").strip()
+        return None, None
 
-    return None, None
+    # 1. Search the expected convention direction first
+    c_idx, caption_text = search_direction(primary_dir)
+    if c_idx is not None:
+        return c_idx, caption_text
+        
+    # 2. Fallback to the other direction if author formatted inconsistently
+    return search_direction(secondary_dir)
 
 
 def attach_captions(elements, window: int = 3) -> list:
