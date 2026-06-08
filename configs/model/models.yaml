@@ -18,7 +18,7 @@ llms:
   rewriter:
     provider: groq
     model: llama-3.1-8b-instant
-    temperature: 0.1
+    temperature: 0.2
     model_kwargs:
       top_p: 0.95
     max_retries: 2
@@ -27,6 +27,8 @@ llms:
     provider: groq
     model: llama-3.1-8b-instant
     temperature: 0.1
+    model_kwargs:
+      top_p: 0.95
     max_retries: 2
 
   image_summarizer:

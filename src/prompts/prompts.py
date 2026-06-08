@@ -8,20 +8,28 @@ CATEGORIES:
 Key distinction: GENERAL is only for "do something with what you already said". If the user asks a new question — even a simple one — choose RAG.
 """
 
-QUERY_RESOLVER_PROMPT = """You are a Query Resolver. Your job is to prepare a user's query for a retriever engine.
+QUERY_RESOLVER_PROMPT = """You are a Query Resolver. Your ONLY job is to resolve ambiguous references in a user's query so a retriever engine can find the right documents.
 
-Rules:
-1. Resolve references: Replace pronouns and vague references ("it", "that", "this") using chat history. If no history or no references exist, leave the query unchanged.
-2. Inject missing subjects: If the user asks a specific factual question without naming the entity (e.g. "what is the score?"), extract the main topic/entity from the history and inject it into the query.
-3. Preserve exactly: Any proper noun, identifier, exact value, or specific term that would change meaning or break search if altered. Rewrite only filler and grammar.
-4. Remove filler: Strip phrases that add no search value ("As a researcher...", "Could you please...", "I was wondering...").
+CRITICAL RULES — follow in order:
+1. If the query is already self-contained (no pronouns/references that need history to understand), return it AS-IS. Do NOT rephrase, summarize, or merge history topics into it.
+2. Resolve ONLY dangling references: Replace pronouns ("it", "that", "this", "the one") with the specific entity from history they refer to. Do NOT add context the user did not ask about.
+3. Inject a missing subject ONLY when the query is genuinely incomplete without it (e.g., "what is the score?" with no subject). Do NOT inject subjects when the query already has one.
+4. Remove filler: Strip phrases that add no search value ("Could you please...", "I was wondering...").
+5. Fix grammar and syntax: Correct typos, broken grammar, and malformed syntax so the query reads naturally. Do NOT change the meaning or swap words for synonyms.
+6. NEVER paraphrase, reword, or restructure the query beyond the above. The output must use the user's original words wherever possible.
 
-Output ONLY the resolved and cleaned query as a plain string. No markdown, no explanation.
+Output ONLY the resolved query as a plain string. No markdown, no explanation.
 
-Example:
-History: "Tell me about React hooks" 
-Input: "Could you please tell me what about the useEffect one?"
+GOOD example:
+History: User: "Tell me about React hooks"
+Input: "What about the useEffect one?"
 Output: What about the useEffect hook?
+
+BAD example (DO NOT do this):
+History: User: "Tell me about React hooks"
+Input: "How does Python handle memory management?"
+Output: "How does React handle memory management?" ← WRONG. The query is self-contained. Return it unchanged.
+Correct output: How does Python handle memory management?
 """
 
 QUERY_DECOMPOSER_PROMPT = """You are a Query Decomposer. Output ONLY a valid JSON array of strings.

@@ -195,6 +195,11 @@ class AgenticRAG:
         query = state.get("query", "")
         history = state.get("messages", [])
 
+        # No history → no references to resolve, skip LLM entirely
+        if not history:
+            logger.info(f"No history, skipping resolver. Query: {query}")
+            return {"resolved_query": query}
+
         system_prompt = QUERY_RESOLVER_PROMPT
 
         # Format history into a string to match the prompt's expected format
@@ -315,7 +320,7 @@ class AgenticRAG:
         user_prompt_list = [
             {"type": "text", "text": "Documents: \n\n"},
         ]
-        user_prompt_str = "Documents: \n\n"
+        user_prompt_str = "Documents:\n\n"
 
         # Format retrieved documents
         for i, doc in enumerate(retrieved_documents, 1):
@@ -325,11 +330,11 @@ class AgenticRAG:
             page = props.get("page_number", "")
             source_ref = source + (f" (p.{page})" if page else "")
 
-            # Configure image/table chunks
-            if doc_type in ("Image", "Table"):
+            # Configure Image chunks
+            if doc_type == "Image":
                 image_path = props.get("image_path", "")
-                caption = props.get("caption", "no description available")
-                text_part = f"[{i}] [{'IMAGE' if doc_type == 'Image' else 'TABLE'}] {caption}\n(Source: {source_ref})\n"
+                full_text = props.get("caption", "no description available")
+                text_part = f"[{i}] [IMAGE]\nSource: {source_ref}\n{full_text}\n"
 
                 user_prompt_list.append({"type": "text", "text": text_part})
                 user_prompt_str += text_part
@@ -343,14 +348,23 @@ class AgenticRAG:
                             "image_url": {"url": f"data:image/png;base64,{base64_img}"},
                         }
                     )
-            # Configure text chunks
+                    
+            # Configure Table chunks (Text only, no base64 image)
+            elif doc_type == "Table":
+                full_text = props.get("text", "")
+                text_part = f"[{i}] [TABLE]\nSource: {source_ref}\n{full_text}\n"
+                
+                user_prompt_list.append({"type": "text", "text": text_part})
+                user_prompt_str += text_part
+                
+            # Configure standard text chunks
             else:
-                text_part = f"[{i}] {props.get('text', '')}\n(Source: {source_ref})\n"
+                text_part = f"[{i}] [TEXT]\nSource: {source_ref}\n{props.get('text', '')}\n"
                 user_prompt_list.append({"type": "text", "text": text_part})
                 user_prompt_str += text_part
 
-            user_prompt_list.append({"type": "text", "text": "---\n"})
-            user_prompt_str += "---\n"
+            user_prompt_list.append({"type": "text", "text": "---\n\n"})
+            user_prompt_str += "---\n\n"
 
         user_prompt_list.append({"type": "text", "text": f"Question:\n{query}"})
         user_prompt_str += f"Question:\n{query}"
