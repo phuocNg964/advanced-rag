@@ -105,36 +105,7 @@ docker compose --profile cpu --profile production up -d --build
 
 How all the pieces fit together — the API server, Docker services, and external LLM provider.
 
-```mermaid
-graph TB
-    subgraph Client
-        Browser["Browser UI"]
-    end
-
-    subgraph Application ["Application (:8000)"]
-        API["FastAPI"]
-        Agent["LangGraph Agent"]
-    end
-
-    subgraph Docker ["Docker Services"]
-        Weaviate["Weaviate (Vector DB)"]
-        Embedder["BGE-M3 Embeddings"]
-        Reranker["Cross-Encoder Reranker"]
-        Postgres["PostgreSQL (Memory)"]
-        Phoenix["Phoenix (Tracing)"]
-    end
-
-    LLM["LLM API (Groq)"]
-
-    Browser <--> API
-    API --> Agent
-    Agent <--> Weaviate
-    Agent <--> LLM
-    Agent <--> Postgres
-    Weaviate --> Embedder
-    Weaviate --> Reranker
-    API -.->|traces| Phoenix
-```
+![System Architecture](docs/system_architecture_strict_connections_1780911140145.png)
 
 **All AI models for search run locally in Docker** (embeddings + reranker) — only the LLM generation calls an external API. This keeps retrieval fast, private, and free of per-query costs.
 
