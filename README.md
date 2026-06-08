@@ -25,8 +25,11 @@ Upload files, ask questions, and get answers with source citations — powered b
 
 ---
 
-<!-- TODO: Record a ~20s GIF showing: upload a PDF → ask a question → see streamed answer with citations -->
-<!-- ![Demo](docs/demo.gif) -->
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/your-video-link-here" width="700" controls="controls"></video>
+  <br>
+  <em>Full end-to-end demo: Multimodal ingestion, vector search, and citation generation</em>
+</p>
 
 <p align="center">
   <img src="docs/chat_demo.png" alt="Chat interface" width="700">
@@ -213,18 +216,25 @@ Key tradeoffs and why I made them.
 
 ## 📊 Evaluation
 
-Evaluated with [RAGAS](https://docs.ragas.io/) via Phoenix Experiments on a synthetic test set of 47 queries, using `gpt-4o-mini` as the generation judge and `text-embedding-3-small` for context metrics.
+Evaluating RAG systems requires testing both retrieval accuracy and generation quality. We evaluated this system using [RAGAS](https://docs.ragas.io/) via Phoenix Experiments.
 
-### Overall Quality
+### 🧪 Experiment Setup
 
-| Metric | Score |
-|---|---|
-| **Context Recall** | 0.9348 |
-| **Context Precision** | 0.8866 |
-| **Faithfulness** | 0.8859 |
-| **Answer Relevancy** | 0.7972 |
+- **The Dataset**: We generated a synthetic test set of 47 queries based on 6 highly technical AI research papers: *Attention Is All You Need*, *DeepSeek-V3 Technical Report*, *Efficient Memory Management for Large Language Models*, *Mistral 7B*, *QLoRA*, and *Qwen2.5 Technical Report*.
+- **Query Generation**: The questions were synthetically generated to cover 4 categories: Fact Retrieval, Comparison, Multi-hop reasoning, and Table Extraction.
+- **The Judge**: We used `gpt-4o-mini` as the LLM judge and `text-embedding-3-small` for context similarity metrics.
+- **Hardware Profile**: Ingestion and local retrieval (Embeddings + Reranker) were executed via Docker Desktop (WSL2 backend) allocated with **16 CPUs** and **8 GB RAM**.
 
-### Performance by Query Type
+### 📈 Overall Quality
+
+| Metric | Score | What it means |
+|---|---|---|
+| **Context Recall** | 0.9348 | Is the retriever finding all the necessary information? |
+| **Context Precision** | 0.8866 | Are the most relevant chunks ranked at the top? |
+| **Faithfulness** | 0.8859 | Is the LLM avoiding hallucinations based on the context? |
+| **Answer Relevancy** | 0.7972 | Does the final answer directly address the user's question? |
+
+### 🔍 Performance by Query Type
 
 | Query Type | Samples | Recall | Precision | Faithfulness | Relevancy |
 |---|---|---|---|---|---|
@@ -237,7 +247,15 @@ Evaluated with [RAGAS](https://docs.ragas.io/) via Phoenix Experiments on a synt
 - **Strong across text**: Fact retrieval, comparison, and multi-hop queries achieve excellent recall (0.96–1.00) and precision, proving the effectiveness of the query decomposer and hybrid search strategy.
 - **Areas for improvement**: Table extraction lags behind (0.66 recall). Parsing tables from PDFs remains challenging and is the next priority for improvement.
 
-Full evaluation pipeline: [`evals/`](evals/)
+### 🔁 Reproducibility
+You can reproduce these results by running the evaluation pipeline locally:
+```bash
+# Install eval dependencies
+pip install -r requirements-dev.txt
+
+# Run the RAGAS evaluation suite
+python evals/run_eval.py
+```
 
 ---
 
