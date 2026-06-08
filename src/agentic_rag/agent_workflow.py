@@ -154,9 +154,19 @@ class AgenticRAG:
         query = state.get("query", "")
         history = state.get("messages", [])[-4:]
 
-        messages = [SystemMessage(content=ROUTER_PROMPT)]
-        messages.extend(history)
-        messages.append(HumanMessage(content=query))
+        # Format history into a string to match the resolver pattern
+        history_str = ""
+        for msg in history:
+            role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+            content = msg.content if hasattr(msg, "content") else str(msg)
+            history_str += f'{role}: "{content}"\n'
+
+        formatted_input = f'History:\n{history_str.strip()}\n\nCurrent Query: "{query}"'
+
+        messages = [
+            SystemMessage(content=ROUTER_PROMPT),
+            HumanMessage(content=formatted_input)
+        ]
 
         try:
             response = self.llm_router.invoke(messages)
