@@ -26,7 +26,7 @@ Upload files, ask questions, and get answers with source citations — powered b
 ---
 
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/your-video-link-here" width="700" controls="controls"></video>
+  <video src="https://github.com/user-attachments/assets/0b603341-19b6-4a56-a7be-b5142e89f0cb" width="700" controls="controls"></video>
   <br>
   <em>Full end-to-end demo: Multimodal ingestion, vector search, and citation generation</em>
 </p>
