@@ -67,7 +67,7 @@ def trace_step(name, kind="CHAIN"):
 class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], operator.add]
     query: str
-    intention: Literal["GENERAL", "RAG"]
+    intention: Literal["CONVERSATIONAL", "INFORMATION_REQUEST"]
     collection_name: str
     resolved_query: str
     decomposed_queries: List[str]
@@ -127,16 +127,16 @@ class AgenticRAG:
         builder.add_node("query_decomposer", self.query_decomposer)
         builder.add_node("retriever", self.retriever)
         builder.add_node("rag_generator", self.rag_generator)
-        # General LLM
-        builder.add_node("general_llm", self.general_llm)
+        # CONVERSATIONAL LLM
+        builder.add_node("conversational_llm", self.conversational_llm)
         builder.set_entry_point("intent_router")
-        # Intent router: RAG or GENERAL
+        # Intent router: INFORMATION_REQUEST or CONVERSATIONAL
         builder.add_conditional_edges(
             "intent_router",
-            lambda state: state.get("intention", "RAG"),
+            lambda state: state.get("intention", "INFORMATION_REQUEST"),
             {
-                "RAG": "query_resolver",
-                "GENERAL": "general_llm",
+                "INFORMATION_REQUEST": "query_resolver",
+                "CONVERSATIONAL": "conversational_llm",
             },
         )
         builder.add_edge("query_resolver", "query_decomposer")
@@ -144,24 +144,23 @@ class AgenticRAG:
         builder.add_edge("retriever", "rag_generator")
 
         builder.add_edge("rag_generator", END)
-        builder.add_edge("general_llm", END)
+        builder.add_edge("conversational_llm", END)
 
         return builder
 
     @trace_step("intent_router")
     def intent_router(self, state: AgentState):
-        """Classify safe queries as RAG or GENERAL."""
+        """Classify safe queries as CONVERSATIONAL or INFORMATION_REQUEST."""
         query = state.get("query", "")
-        history = state.get("messages", [])[-4:]
 
-        # Format history into a string to match the resolver pattern
-        history_str = ""
-        for msg in history:
-            role = "User" if isinstance(msg, HumanMessage) else "Assistant"
-            content = msg.content if hasattr(msg, "content") else str(msg)
-            history_str += f'{role}: "{content}"\n'
+        # Only the last assistant message is needed — to detect "operate on previous response" intent
+        last_assistant = next(
+            (m for m in reversed(state.get("messages", [])) if not isinstance(m, HumanMessage)),
+            None,
+        )
+        last_response_str = f'Last Assistant Response: "{last_assistant.content}"\n\n' if last_assistant else ""
 
-        formatted_input = f'History:\n{history_str.strip()}\n\nCurrent Query: "{query}"'
+        formatted_input = f'{last_response_str}Current Query: "{query}"'
 
         messages = [
             SystemMessage(content=ROUTER_PROMPT),
@@ -172,20 +171,20 @@ class AgenticRAG:
             response = self.llm_router.invoke(messages)
             intention = response.content.strip().upper()
 
-            if intention not in ["GENERAL", "RAG"]:
+            if intention not in ["INFORMATION_REQUEST", "CONVERSATIONAL"]:
                 logger.warning(
-                    f"Router output '{intention}' invalid. Defaulting to RAG."
+                    f"Router output '{intention}' invalid. Defaulting to INFORMATION_REQUEST."
                 )
-                intention = "RAG"
+                intention = "INFORMATION_REQUEST"
         except Exception as e:
-            logger.error(f"Routing failed: {e}. Defaulting to RAG.")
-            intention = "RAG"
+            logger.error(f"Routing failed: {e}. Defaulting to INFORMATION_REQUEST.")
+            intention = "INFORMATION_REQUEST"
 
         logger.info(f"Router classified intent as: {intention}")
         return {"intention": intention}
 
-    @trace_step("general_llm")
-    def general_llm(self, state: AgentState):
+    @trace_step("conversational_llm")
+    async def conversational_llm(self, state: AgentState):
         """Handle standard conversational inputs that require no documents."""
         query = state["query"]
         history = state.get("messages", [])
@@ -195,7 +194,7 @@ class AgenticRAG:
         )
 
         messages = [system_instruction] + history[-4:] + [HumanMessage(content=query)]
-        response = self.llm_rag.invoke(messages)
+        response = await self.llm_rag.ainvoke(messages)
 
         return {"messages": [HumanMessage(content=query), response]}
 
@@ -482,7 +481,7 @@ class AgenticRAG:
 
                     elif kind == "on_chat_model_stream":
                         node_name = event.get("metadata", {}).get("langgraph_node")
-                        if node_name in ("rag_generator", "general_llm"):
+                        if node_name in ("rag_generator", "conversational_llm"):
                             chunk_content = event["data"]["chunk"].content
                             if chunk_content:
                                 yield f"data: {json.dumps({'type': 'chunk', 'text': chunk_content})}\n\n"
@@ -492,7 +491,6 @@ class AgenticRAG:
         except Exception as e:
             logger.error(f"Streaming failed: {e}")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-
 
     async def get_history(
         self, collection_name: str, session_id: str = "default"

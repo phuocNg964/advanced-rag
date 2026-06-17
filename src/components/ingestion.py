@@ -191,8 +191,13 @@ class IngestService:
                         ):
                             Path(ele.metadata.image_path).unlink(missing_ok=True)
                             continue
-                    if etype not in ["Image", "Table"] and len(d.get("text", "")) <= 2:
-                        continue
+                    if etype not in ["Image", "Table"]:
+                        text = d.get("text", "")
+                        if len(text) <= 2:
+                            continue
+                        # Drop noise: text mostly non-alphanumeric (e.g., mangled arXiv IDs)
+                        if sum(c.isalnum() for c in text) / len(text) < 0.5:
+                            continue
                     significant_elements.append(ele)
 
                 # attach captions (modifies Image/Table text in-place, removes caption elements)
@@ -224,7 +229,7 @@ class IngestService:
                             f"Summarizing {len(image_chunks)} images concurrently (max 5 workers)..."
                         )
 
-                        with ThreadPoolExecutor(max_workers=5) as executor:
+                        with ThreadPoolExecutor(max_workers=3) as executor:
                             current_context = context.get_current()
 
                             def _summarize_with_context(chunk, ctx):

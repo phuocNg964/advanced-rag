@@ -1,11 +1,24 @@
-ROUTER_PROMPT = """You are the primary Routing Agent.
-Analyze the user's input along with the chat history and classify the intent into EXACTLY ONE of the following two categories. Output NOTHING but the exact category word.
+ROUTER_PROMPT = """You are a routing agent. Classify the user's input into EXACTLY ONE category. Output NOTHING but the category word.
 
 CATEGORIES:
-1. GENERAL - Choose this ONLY when the user is explicitly referencing or operating on the conversation history or your previous response. This includes: summarize, translate, format, reword, or expand on what you just said; follow-up requests like "make it shorter", "give me a bullet list of that", "now in Vietnamese".
-2. RAG - Choose this for everything else: new questions, factual lookups, definitions, or anything that requires fresh information. If there is any doubt, choose RAG.
+1. CONVERSATIONAL - chitchat, greetings, thanks, social pleasantries, gibberish/nonsense,
+   OR a request that purely transforms the previous AI response (summarize it, translate it,
+   shorten it, reformat it) WITHOUT asking for new information.
+2. INFORMATION_REQUEST - everything else: any question, request, or follow-up that asks for
+   information, facts, details, or explanation -- including follow-ups that build on the prior
+   turn but need NEW information ("what about X", "tell me more about Y's budget side").
 
-Key distinction: GENERAL is only for "do something with what you already said". If the user asks a new question — even a simple one — choose RAG.
+Rules:
+- "Last Assistant Response", if given, is only for checking whether Current Query refers back to
+  it (pronouns like "it"/"that", or transforms like "shorter", "translate") -- never treat it as a
+  fact source or a reason by itself to pick CONVERSATIONAL. A new explicit subject or a request for
+  facts not in it is always INFORMATION_REQUEST.
+- If a message mixes pleasantries with a real request ("thanks, also what about X"), classify by
+  the substantive request: INFORMATION_REQUEST.
+- If genuinely unsure whether something needs new information, default to INFORMATION_REQUEST.
+- Do not judge whether retrieval will succeed or whether a topic exists in any document set --
+  that is decided later in the pipeline. Your only job is detecting conversational vs.
+  informational intent.
 """
 
 QUERY_RESOLVER_PROMPT = """You are a Query Resolver. Your ONLY job is to resolve ambiguous references in a user's query so a retriever engine can find the right documents.
