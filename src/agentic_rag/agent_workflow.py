@@ -39,6 +39,8 @@ logger = get_logger(__name__)
 _settings = get_settings()
 tracer = trace.get_tracer(__name__)
 
+_RESOLVER_HISTORY_CHARS = 150
+
 
 def trace_step(name, kind="CHAIN"):
     def decorator(func):
@@ -81,8 +83,9 @@ class AgenticRAG:
         Call setup() asynchronously to initialize the checkpointer and pool.
         """
         self.llm_rag = get_llm("rag_generator")
-        self.llm_rewriter = get_llm("rewriter")
+        self.llm_decomposer = get_llm("decomposer")
         self.llm_router = get_llm("router")
+        self.llm_resolver = get_llm("resolver")
 
         self.pool = None
         self.checkpointer = None
@@ -190,7 +193,7 @@ class AgenticRAG:
         history = state.get("messages", [])
 
         system_instruction = SystemMessage(
-            content="You are a helpful AI assistant. Answer the user's conversational query naturally."
+            content="You are a helpful AI assistant. Answer the user's conversational query naturally. Always respond in the same language as the user's message."
         )
 
         messages = [system_instruction] + history[-4:] + [HumanMessage(content=query)]
@@ -200,34 +203,29 @@ class AgenticRAG:
 
     @trace_step("query_resolver")
     def query_resolver(self, state: AgentState):
-        """Resolve references and remove filler from query"""
+        """Resolve references and translate query to English for retrieval."""
         query = state.get("query", "")
         history = state.get("messages", [])
 
-        # No history → no references to resolve, skip LLM entirely
-        if not history:
-            logger.info(f"No history, skipping resolver. Query: {query}")
-            return {"resolved_query": query}
+        if history:
+            history_str = ""
+            for msg in history[-4:]:
+                role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+                content = msg.content if hasattr(msg, "content") else str(msg)
+                if role == "Assistant":
+                    content = content[:_RESOLVER_HISTORY_CHARS]
+                history_str += f'{role}: "{content}"\n'
+            formatted_input = f'History:\n{history_str.strip()}\n\nInput: "{query}"'
+        else:
+            formatted_input = f'Input: "{query}"'
 
-        system_prompt = QUERY_RESOLVER_PROMPT
-
-        # Format history into a string to match the prompt's expected format
-        history_str = ""
-        for msg in history[-4:]:
-            role = "User" if isinstance(msg, HumanMessage) else "Assistant"
-            content = msg.content if hasattr(msg, "content") else str(msg)
-            history_str += f'{role}: "{content}"\n'
-
-        formatted_input = f'History:\n{history_str.strip()}\n\nInput: "{query}"'
-
-        # Build messages: system instructions → formatted text input
         messages = [
-            SystemMessage(content=system_prompt),
+            SystemMessage(content=QUERY_RESOLVER_PROMPT),
             HumanMessage(content=formatted_input),
         ]
 
         try:
-            raw_response = self.llm_rewriter.invoke(messages)
+            raw_response = self.llm_resolver.invoke(messages)
             resolved_query = raw_response.content.strip()
             if not resolved_query:
                 logger.warning(
@@ -254,7 +252,7 @@ class AgenticRAG:
         ]
 
         try:
-            raw_response = self.llm_rewriter.invoke(messages)
+            raw_response = self.llm_decomposer.invoke(messages)
             text = raw_response.content.strip()
 
             # Extract JSON array from response (handles extra text around it)

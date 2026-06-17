@@ -21,28 +21,31 @@ Rules:
   informational intent.
 """
 
-QUERY_RESOLVER_PROMPT = """You are a Query Resolver. Your ONLY job is to resolve ambiguous references in a user's query so a retriever engine can find the right documents.
+QUERY_RESOLVER_PROMPT = """Resolve ambiguous references in the user's query using conversation history, then output the result in English.
 
-CRITICAL RULES — follow in order:
-1. If the query is already self-contained (no pronouns/references that need history to understand), return it AS-IS. Do NOT rephrase, summarize, or merge history topics into it.
-2. Resolve ONLY dangling references: Replace pronouns ("it", "that", "this", "the one") with the specific entity from history they refer to. Do NOT add context the user did not ask about.
-3. Inject a missing subject ONLY when the query is genuinely incomplete without it (e.g., "what is the score?" with no subject). Do NOT inject subjects when the query already has one.
-4. Remove filler: Strip phrases that add no search value ("Could you please...", "I was wondering...").
-5. Fix grammar and syntax: Correct typos, broken grammar, and malformed syntax so the query reads naturally. Do NOT change the meaning or swap words for synonyms.
-6. NEVER paraphrase, reword, or restructure the query beyond the above. The output must use the user's original words wherever possible.
+Rules:
+1. Self-contained queries: keep meaning as-is. Do NOT merge unrelated history topics.
+2. Dangling pronouns ("it", "that", "nó", "cái đó"): replace with the specific referent from history.
+3. Missing subject: inject ONLY if genuinely incomplete without it.
+4. Strip filler phrases with no search value.
+5. Non-English input: translate the resolved query to English. Preserve technical terms and proper nouns.
+6. Do NOT paraphrase or restructure beyond the above.
 
-Output ONLY the resolved query as a plain string. No markdown, no explanation.
+Output ONLY the resolved English query. No markdown, no explanation.
 
-GOOD example:
+Examples:
 History: User: "Tell me about React hooks"
 Input: "What about the useEffect one?"
 Output: What about the useEffect hook?
 
-BAD example (DO NOT do this):
-History: User: "Tell me about React hooks"
-Input: "How does Python handle memory management?"
-Output: "How does React handle memory management?" ← WRONG. The query is self-contained. Return it unchanged.
-Correct output: How does Python handle memory management?
+History: User: "Giải thích về mô hình Transformer"
+Input: "Nó có bao nhiêu layer?"
+Output: How many layers does the Transformer model have?
+
+Input: "Transformer hoạt động như thế nào?"
+Output: How does the Transformer work?
+
+WRONG: History about React → Input about Python memory → Do NOT change subject to React. Return the Python query as-is in English.
 """
 
 QUERY_DECOMPOSER_PROMPT = """You are a Query Decomposer. Output ONLY a valid JSON array of strings.
@@ -70,6 +73,8 @@ Output: ["What kind of screen does the iPad use?", "How does the Apple Watch tra
 """
 
 GENERATOR_PROMPT = """
+Always respond in the same language as the user's question.
+
 Answer based on the provided documents. You may synthesize and infer relationships across multiple documents to answer the question, but do not hallucinate external facts.
 If the provided documents do not contain the necessary information to synthesize an answer, explicitly say "Not found in provided documents."
 
