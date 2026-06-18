@@ -25,6 +25,22 @@ logger = get_logger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
+def _to_relative_image_path(image_path: str, processed_base: Path) -> str:
+    """Return image_path relative to processed_base (data/processed/).
+
+    Storing a relative path (e.g. "MyCol/doc/figure-1.png") instead of the
+    absolute container path makes it portable across Docker and local dev.
+    """
+    if not image_path:
+        return image_path
+    try:
+        return str(Path(image_path).relative_to(processed_base))
+    except ValueError:
+        # Path is already relative or cannot be made relative — keep as-is
+        return image_path
+
+
+
 class IngestService:
     """
     Service class for document ingestion operations.
@@ -139,6 +155,7 @@ class IngestService:
                     / collection_name
                     / Path(file_name).stem
                 )
+                processed_base = self.settings.data_processed_dir
 
                 # OOM Protection: Count pages quickly using pdfminer
                 try:
@@ -256,7 +273,10 @@ class IngestService:
                             "id": ele_dict.get("element_id", ""),
                             "caption": ele_dict["metadata"].get("caption", ""),
                             "source": ele_dict["metadata"].get("source", ""),
-                            "image_path": ele_dict["metadata"].get("image_path", ""),
+                            "image_path": _to_relative_image_path(
+                                ele_dict["metadata"].get("image_path", ""),
+                                processed_base,
+                            ),
                             "page_number": ele_dict["metadata"].get("page_number", 0),
                         },
                     )
