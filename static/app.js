@@ -871,27 +871,22 @@ function renderLatex() {
     });
 }
 
-// Convert absolute image path to relative URL for serving
+// Convert image path to URL for serving via FastAPI StaticFiles at /data/processed
 function getImageUrl(imagePath) {
     if (!imagePath) return '';
 
-    // Normalize path separators
-    const normalizedPath = imagePath.replace(/\\/g, '/');
+    const normalized = imagePath.replace(/\\/g, '/');
 
-    // If it's already a relative path, use it directly
-    if (!normalizedPath.includes(':')) {
-        return `/data/processed/${normalizedPath}`;
-    }
-
-    // Extract relative path from absolute path
-    // Look for 'data/processed/' in the normalized path
-    const match = normalizedPath.match(/data\/processed\/(.+)$/);
+    // Extract relative part from any absolute path:
+    //   Linux: "/app/data/processed/Col/doc/fig.png" → "Col/doc/fig.png"
+    //   Windows: "E:/.../data/processed/Col/doc/fig.png" → "Col/doc/fig.png"
+    const match = normalized.match(/data\/processed\/(.+)$/);
     if (match) {
         return `/data/processed/${match[1]}`;
     }
 
-    // Fallback: just use the filename
-    return `/data/processed/${getFilename(imagePath)}`;
+    // Pure relative path (new format after ingestion fix): "Col/doc/fig.png"
+    return `/data/processed/${normalized}`;
 }
 
 // ===========================
