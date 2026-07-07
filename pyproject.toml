@@ -1,0 +1,76 @@
+[project]
+name = "multimodal-agentic-knowledge-base"
+version = "0.1.0"
+description = "Multimodal agentic RAG app — chat with PDFs using LangGraph, Weaviate, and local embeddings"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "fastapi==0.121.2",
+    "uvicorn==0.38.0",
+    "python-multipart==0.0.21",
+    "pydantic==2.12.4",
+    "pydantic-settings==2.7.1",
+    "python-dotenv==1.2.2",
+    "langchain==0.3.7",
+    "langchain-google-genai==2.0.5",
+    "langchain-groq==0.2.5",
+    "langchain-openai==0.2.14",
+    "langchain-ollama==0.2.1",
+    "langchain-huggingface==0.1.2",
+    "pyyaml==6.0.3",
+    "tenacity==9.1.2",
+    "langgraph==0.5.4",
+    "langgraph-checkpoint-postgres==3.0.5",
+    "psycopg[binary,pool]==3.3.2",
+    "weaviate-client==4.10.2",
+    "sentence-transformers==3.3.1",
+    "torch==2.12.1+cpu",
+    "torchvision==0.27.1+cpu",
+    "docling==2.80.0",
+    "pypdf==6.6.0",
+    "pillow==12.2.0",
+    "pymupdf==1.26.7",
+    "easyocr==1.7.2",
+    "arize-phoenix-otel==0.15.0",
+    "openinference-instrumentation-langchain==0.1.63",
+    "opentelemetry-api==1.41.0",
+    "opentelemetry-instrumentation-weaviate==0.60.0",
+]
+
+[dependency-groups]
+dev = [
+    "langchain-community==0.3.7",
+    "langchain-experimental==0.3.3",
+    "langchain-pymupdf4llm",
+    "langchain-weaviate==0.0.3",
+    "langchain-unstructured==0.1.4",
+    "pytest",
+    "arize-phoenix[evals]",
+    "pandas>=2.0.0",
+    "ragas",
+    "litellm",
+    "unstructured[pdf]==0.16.12",
+    "pdfminer.six==20231228",
+    "python-magic==0.4.27",
+]
+
+[tool.pytest.ini_options]
+# arize-phoenix[evals] registers a pytest plugin that has a broken internal
+# import in the version resolved by uv. Disable it so `make test` / pytest
+# can run without a live Phoenix server or eval dependencies.
+addopts = "-p no:phoenix"
+# Make `src` and `scripts` importable without installing the package.
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }

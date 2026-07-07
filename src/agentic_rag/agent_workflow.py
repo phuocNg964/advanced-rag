@@ -1,20 +1,22 @@
+import asyncio
+import json
 import operator
-import json, re
-from typing import TypedDict, Annotated, List, Any, Literal
+import re
+from functools import wraps
+from typing import Annotated, Any, Literal, TypedDict
 
 from langgraph.graph import StateGraph, END
-from langchain_core.messages import SystemMessage, HumanMessage, AnyMessage, AIMessage
+from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg_pool import AsyncConnectionPool
 
-from concurrent.futures import ThreadPoolExecutor
-
 from src.core.config import get_settings
 from src.core.logger import get_logger
 from src.models.base import get_llm
-from src.components.retriever import retrieve
-from src.components.parser import to_base64
+from src.components.reranker import get_reranker
+from src.components.retriever import retrieve, resolve_reranker_mode
+from src.components.image_utils import to_base64
 from src.core.weaviate_client import get_weaviate_client
 from src.prompts.prompts import (
     ROUTER_PROMPT,
@@ -25,8 +27,6 @@ from src.prompts.prompts import (
 
 from src.core.telemetry import get_current_trace_id
 from opentelemetry import trace
-import asyncio
-from functools import wraps
 
 try:
     from openinference.semconv.trace import SpanAttributes
@@ -36,12 +36,9 @@ except ImportError:
     SPAN_KIND = "openinference.span.kind"
 
 logger = get_logger(__name__)
-_settings = get_settings()
 tracer = trace.get_tracer(__name__)
 
 _RESOLVER_HISTORY_CHARS = 150
-
-
 def trace_step(name, kind="CHAIN"):
     def decorator(func):
         if asyncio.iscoroutinefunction(func):
@@ -72,8 +69,8 @@ class AgentState(TypedDict):
     intention: Literal["CONVERSATIONAL", "INFORMATION_REQUEST"]
     collection_name: str
     resolved_query: str
-    decomposed_queries: List[str]
-    retrieved_documents: List[Any]
+    decomposed_queries: list[str]
+    retrieved_documents: list[Any]
 
 
 class AgenticRAG:
@@ -101,7 +98,7 @@ class AgenticRAG:
         logger.info(f"Connecting to Postgres for memory: {settings.pg_host}")
         self.pool = AsyncConnectionPool(
             conninfo=settings.pg_url,
-            max_size=20,
+            max_size=settings.pg_pool_max_size,
             kwargs={"autocommit": True},
             open=False,
         )
@@ -152,11 +149,11 @@ class AgenticRAG:
         return builder
 
     @trace_step("intent_router")
-    def intent_router(self, state: AgentState):
+    async def intent_router(self, state: AgentState):
         """Classify safe queries as CONVERSATIONAL or INFORMATION_REQUEST."""
         query = state.get("query", "")
 
-        # Only the last assistant message is needed — to detect "operate on previous response" intent
+        # Only the last assistant message is needed â€” to detect "operate on previous response" intent
         last_assistant = next(
             (m for m in reversed(state.get("messages", [])) if not isinstance(m, HumanMessage)),
             None,
@@ -171,7 +168,7 @@ class AgenticRAG:
         ]
 
         try:
-            response = self.llm_router.invoke(messages)
+            response = await self.llm_router.ainvoke(messages)
             intention = response.content.strip().upper()
 
             if intention not in ["INFORMATION_REQUEST", "CONVERSATIONAL"]:
@@ -193,7 +190,7 @@ class AgenticRAG:
         history = state.get("messages", [])
 
         system_instruction = SystemMessage(
-            content="You are a helpful AI assistant. Answer the user's conversational query naturally. Always respond in the same language as the user's message."
+            content="You are a helpful AI assistant. Respond in the same language as the user, Vietnamese or English. Be concise by default."
         )
 
         messages = [system_instruction] + history[-4:] + [HumanMessage(content=query)]
@@ -202,22 +199,23 @@ class AgenticRAG:
         return {"messages": [HumanMessage(content=query), response]}
 
     @trace_step("query_resolver")
-    def query_resolver(self, state: AgentState):
-        """Resolve references and translate query to English for retrieval."""
+    async def query_resolver(self, state: AgentState):
+        """Resolve references using conversation history."""
         query = state.get("query", "")
         history = state.get("messages", [])
 
-        if history:
-            history_str = ""
-            for msg in history[-4:]:
-                role = "User" if isinstance(msg, HumanMessage) else "Assistant"
-                content = msg.content if hasattr(msg, "content") else str(msg)
-                if role == "Assistant":
-                    content = content[:_RESOLVER_HISTORY_CHARS]
-                history_str += f'{role}: "{content}"\n'
-            formatted_input = f'History:\n{history_str.strip()}\n\nInput: "{query}"'
-        else:
-            formatted_input = f'Input: "{query}"'
+        if not history:
+            logger.info(f"Resolved query: {query}")
+            return {"resolved_query": query}
+
+        history_str = ""
+        for msg in history[-4:]:
+            role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+            content = msg.content if hasattr(msg, "content") else str(msg)
+            if role == "Assistant":
+                content = content[:_RESOLVER_HISTORY_CHARS]
+            history_str += f'{role}: "{content}"\n'
+        formatted_input = f'History:\n{history_str.strip()}\n\nInput: "{query}"'
 
         messages = [
             SystemMessage(content=QUERY_RESOLVER_PROMPT),
@@ -225,7 +223,7 @@ class AgenticRAG:
         ]
 
         try:
-            raw_response = self.llm_resolver.invoke(messages)
+            raw_response = await self.llm_resolver.ainvoke(messages)
             resolved_query = raw_response.content.strip()
             if not resolved_query:
                 logger.warning(
@@ -240,26 +238,24 @@ class AgenticRAG:
         return {"resolved_query": resolved_query}
 
     @trace_step("query_decomposer")
-    def query_decomposer(self, state: AgentState):
+    async def query_decomposer(self, state: AgentState):
         """Decompose query into sub-queries if necessary"""
         resolved_query = state.get("resolved_query", state.get("query", ""))
 
-        system_prompt = QUERY_DECOMPOSER_PROMPT
-
         messages = [
-            SystemMessage(content=system_prompt),
+            SystemMessage(content=QUERY_DECOMPOSER_PROMPT),
             HumanMessage(content=resolved_query),
         ]
 
         try:
-            raw_response = self.llm_decomposer.invoke(messages)
+            raw_response = await self.llm_decomposer.ainvoke(messages)
             text = raw_response.content.strip()
 
             # Extract JSON array from response (handles extra text around it)
             match = re.search(r"\[.*\]", text, re.DOTALL)
             if match:
                 queries = json.loads(match.group())
-                queries = [str(q) for q in queries if q][:3]
+                queries = [str(q).strip() for q in queries if str(q).strip()][:3]
                 if not queries:
                     logger.warning(
                         "LLM returned empty queries list. Falling back to resolved query."
@@ -276,111 +272,134 @@ class AgenticRAG:
         return {"decomposed_queries": queries}
 
     @trace_step("retriever", kind="RETRIEVER")
-    def retriever(self, state: AgentState):
-        """Execute retrieval plan"""
+    async def retriever(self, state: AgentState):
+        """Execute retrieval plan â€” sub-queries run concurrently.
 
+        The Weaviate v4 sync client is thread-safe (gRPC channels support
+        concurrent calls), so a single shared client is passed to each thread.
+        Ref: https://weaviate.io/developers/weaviate/client-libraries/python/async
+        """
         queries = state.get("decomposed_queries", [])
         collection_name = state.get("collection_name", "")
-        all_docs = []
-        seen_ids = set()  # Track seen document IDs
+        settings = get_settings()
+        reranker_mode = resolve_reranker_mode(settings.reranker_mode)
+        final_top_k = settings.retrieval_top_k_reranker
+        per_query_rerank_k = 0 if reranker_mode == "app" else final_top_k
 
-        # Single connection shared across all sub-queries
+        # Single connection shared across all concurrent sub-queries
         client = get_weaviate_client()
 
-        try:
-            with ThreadPoolExecutor(max_workers=3) as executor:
-                # Issue all sub-queries to Weaviate in parallel
-                futures = [
-                    executor.submit(
-                        retrieve,
-                        query,
-                        collection_name=collection_name,
-                        top_k=25,
-                        top_k_reranker=5,
-                        alpha=0.6,
-                        client=client,
-                    )
-                    for query in queries
-                ]
+        async def _retrieve_one(query: str) -> list:
+            return await asyncio.to_thread(
+                retrieve,
+                query,
+                collection_name=collection_name,
+                top_k=settings.retrieval_top_k,
+                top_k_reranker=per_query_rerank_k,
+                alpha=0.6,
+                client=client,
+            )
 
-                for future in futures:
-                    docs = future.result()
-                    for doc in docs:
-                        # Use UUID or chunk_id for deduplication
-                        doc_id = str(doc.uuid)
-                        if doc_id not in seen_ids:
-                            seen_ids.add(doc_id)
-                            all_docs.append(doc)
+        try:
+            results_per_query = await asyncio.gather(
+                *[_retrieve_one(q) for q in queries]
+            )
         except Exception as e:
             logger.error(f"Retrieval failed: {e}")
+            results_per_query = []
+
+        # Deduplicate across sub-queries, preserving order
+        all_docs = []
+        seen_ids: set = set()
+        for docs in results_per_query:
+            for doc in docs:
+                doc_id = str(doc.uuid)
+                if doc_id not in seen_ids:
+                    seen_ids.add(doc_id)
+                    all_docs.append(doc)
 
         if not all_docs:
             logger.warning(f"No documents retrieved for queries: {queries}")
         else:
             logger.info(f"Retrieved {len(all_docs)} unique documents")
 
-        return {"retrieved_documents": all_docs}
+        rerank_query = state.get("resolved_query", state.get("query", ""))
+        final_docs = self._finalize_retrieved_docs(
+            rerank_query,
+            all_docs,
+            reranker_mode,
+            final_top_k,
+            settings,
+        )
+
+        return {"retrieved_documents": final_docs}
+
+    @staticmethod
+    def _finalize_retrieved_docs(
+        query: str,
+        docs: list,
+        reranker_mode: str,
+        top_k: int,
+        settings,
+    ) -> list:
+        if not docs or top_k <= 0:
+            return docs
+        if reranker_mode == "app":
+            return get_reranker(settings).rerank(query, docs, top_k)
+        return docs[:top_k]
+
+    @staticmethod
+    def _source_ref(source: str, page_number: int | None) -> str:
+        if not page_number:
+            return source
+        return f"{source} (p.{page_number})"
+
+    def _document_text_part(self, index: int, props: dict) -> str:
+        doc_type = props.get("type", "").lower()
+        label = {"image": "IMAGE", "table": "TABLE"}.get(doc_type, "TEXT")
+        source_ref = self._source_ref(props.get("source", ""), props.get("page_number"))
+        text = props.get("text") or ("no description available" if doc_type == "image" else "")
+        return f"[{index}] [{label}]\nSource: {source_ref}\n{text}\n"
+
+    @staticmethod
+    def _text_only_content(content_blocks: list[dict]) -> str:
+        return "".join(
+            block["text"]
+            for block in content_blocks
+            if block.get("type") == "text"
+        )
 
     def _build_rag_messages(self, query: str, retrieved_documents: list) -> list:
         """Build the prompt messages for RAG generation (shared by generator and stream_generate)."""
         has_images = False
-        user_prompt_list = [
+        content_blocks = [
             {"type": "text", "text": "Documents: \n\n"},
         ]
-        user_prompt_str = "Documents:\n\n"
 
-        # Format retrieved documents
         for i, doc in enumerate(retrieved_documents, 1):
             props = doc.properties
-            doc_type = props.get("type", "")
-            source = props.get("source", "")
-            page = props.get("page_number", "")
-            source_ref = source + (f" (p.{page})" if page else "")
+            text_part = self._document_text_part(i, props)
+            content_blocks.append({"type": "text", "text": text_part})
 
-            # Configure Image chunks
-            if doc_type == "Image":
+            doc_type = props.get("type", "").lower()
+            if doc_type == "image":
                 image_path = props.get("image_path", "")
-                full_text = props.get("caption", "no description available")
-                text_part = f"[{i}] [IMAGE]\nSource: {source_ref}\n{full_text}\n"
-
-                user_prompt_list.append({"type": "text", "text": text_part})
-                user_prompt_str += text_part
-
                 base64_img = to_base64(image_path)
                 if base64_img:
                     has_images = True
-                    user_prompt_list.append(
+                    content_blocks.append(
                         {
                             "type": "image_url",
                             "image_url": {"url": f"data:image/png;base64,{base64_img}"},
                         }
                     )
-                    
-            # Configure Table chunks (Text only, no base64 image)
-            elif doc_type == "Table":
-                full_text = props.get("text", "")
-                text_part = f"[{i}] [TABLE]\nSource: {source_ref}\n{full_text}\n"
-                
-                user_prompt_list.append({"type": "text", "text": text_part})
-                user_prompt_str += text_part
-                
-            # Configure standard text chunks
-            else:
-                text_part = f"[{i}] [TEXT]\nSource: {source_ref}\n{props.get('text', '')}\n"
-                user_prompt_list.append({"type": "text", "text": text_part})
-                user_prompt_str += text_part
 
-            user_prompt_list.append({"type": "text", "text": "---\n\n"})
-            user_prompt_str += "---\n\n"
+            content_blocks.append({"type": "text", "text": "---\n\n"})
 
-        user_prompt_list.append({"type": "text", "text": f"Question:\n{query}"})
-        user_prompt_str += f"Question:\n{query}"
+        content_blocks.append({"type": "text", "text": f"Question:\n{query}"})
 
-        rag_prompt = GENERATOR_PROMPT
-
-        final_content = user_prompt_list if has_images else user_prompt_str
-
-        return [SystemMessage(content=rag_prompt), HumanMessage(content=final_content)]
+        final_content = content_blocks if has_images else self._text_only_content(content_blocks)
+        return [SystemMessage(content=GENERATOR_PROMPT), HumanMessage(content=final_content)]
 
     @trace_step("rag_generator")
     async def rag_generator(self, state: AgentState) -> dict:
@@ -415,7 +434,8 @@ class AgenticRAG:
                 {
                     "text": props.get("text", ""),
                     "source": props.get("source", ""),
-                    "page_number": props.get("page_number", ""),
+                    "page_number": props.get("page_number", 0),
+                    "section": props.get("section", ""),
                     "type": props.get("type", ""),
                     "image_path": props.get("image_path", ""),
                     "score": score,
@@ -459,7 +479,7 @@ class AgenticRAG:
         config = {"configurable": {"thread_id": thread_id}}
 
         try:
-            with tracer.start_as_current_span("agent_chat") as span:
+            with tracer.start_as_current_span("agent_chat"):
                 trace_id = get_current_trace_id()
 
                 async for event in self.graph.astream_events(
@@ -470,25 +490,36 @@ class AgenticRAG:
                     config=config,
                     version="v2",
                 ):
-                    kind = event["event"]
+                    sse = self._stream_event_to_sse(event)
+                    if sse:
+                        yield sse
 
-                    if kind == "on_chain_end" and event["name"] == "retriever":
-                        docs = event["data"]["output"].get("retrieved_documents", [])
-                        formatted_docs = self._format_retrieved_docs(docs)
-                        yield f"data: {json.dumps({'type': 'docs', 'documents': formatted_docs})}\n\n"
-
-                    elif kind == "on_chat_model_stream":
-                        node_name = event.get("metadata", {}).get("langgraph_node")
-                        if node_name in ("rag_generator", "conversational_llm"):
-                            chunk_content = event["data"]["chunk"].content
-                            if chunk_content:
-                                yield f"data: {json.dumps({'type': 'chunk', 'text': chunk_content})}\n\n"
-
-                yield f"data: {json.dumps({'type': 'done', 'trace_id': trace_id})}\n\n"
+                yield self._sse_event("done", trace_id=trace_id)
 
         except Exception as e:
             logger.error(f"Streaming failed: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield self._sse_event("error", message=str(e))
+
+    @staticmethod
+    def _sse_event(event_type: str, **payload) -> str:
+        return f"data: {json.dumps({'type': event_type, **payload})}\n\n"
+
+    def _stream_event_to_sse(self, event: dict) -> str | None:
+        kind = event["event"]
+
+        if kind == "on_chain_end" and event["name"] == "retriever":
+            docs = event["data"]["output"].get("retrieved_documents", [])
+            formatted_docs = self._format_retrieved_docs(docs)
+            return self._sse_event("docs", documents=formatted_docs)
+
+        if kind == "on_chat_model_stream":
+            node_name = event.get("metadata", {}).get("langgraph_node")
+            if node_name in ("rag_generator", "conversational_llm"):
+                chunk_content = event["data"]["chunk"].content
+                if chunk_content:
+                    return self._sse_event("chunk", text=chunk_content)
+
+        return None
 
     async def get_history(
         self, collection_name: str, session_id: str = "default"
@@ -531,8 +562,6 @@ class AgenticRAG:
         """Clear the conversational history using LangGraph's checkpointer delete method."""
         thread_id = f"{collection_name}:{session_id}"
         logger.info(f"Clearing chat history for thread: {thread_id}")
-
-        config = {"configurable": {"thread_id": thread_id}}
 
         try:
             await self.checkpointer.adelete_thread(thread_id)

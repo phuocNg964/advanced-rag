@@ -2,11 +2,51 @@ import weaviate
 from weaviate.classes.query import Rerank, Filter, MetadataQuery
 from typing import List, Optional
 from opentelemetry import trace
+from src.components.reranker import get_reranker
 from src.core.logger import get_logger
 from src.core.config import get_settings
 
 logger = get_logger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+def resolve_reranker_mode(mode: str) -> str:
+    normalized = mode.lower()
+    if normalized in {"weaviate", "app", "none"}:
+        return normalized
+
+    logger.warning(
+        "Invalid RERANKER_MODE '%s'. Falling back to 'weaviate'.",
+        mode,
+    )
+    return "weaviate"
+
+
+def _build_search_filter(metadata: Optional[dict]):
+    if not metadata:
+        return None
+
+    filter_list = []
+    for key, value in metadata.items():
+        if isinstance(value, list):
+            filter_list.append(Filter.by_property(key).contains_any(value))
+        else:
+            filter_list.append(Filter.by_property(key).equal(value))
+    return Filter.any_of(filter_list)
+
+
+def _weaviate_rerank(query: str, reranker_mode: str, top_k_reranker: int):
+    if reranker_mode == "weaviate" and top_k_reranker:
+        return Rerank(prop="text", query=query)
+    return None
+
+
+def _apply_reranking(query: str, objects: list, top_k_reranker: int, settings, reranker_mode: str):
+    if not top_k_reranker:
+        return objects
+    if reranker_mode == "app":
+        return get_reranker(settings).rerank(query, objects, top_k_reranker)
+    return objects[:top_k_reranker]
 
 
 def retrieve(
@@ -17,6 +57,7 @@ def retrieve(
     alpha: float = 0.5,
     top_k_reranker: int = 5,
     client: Optional[weaviate.WeaviateClient] = None,
+    raise_errors: bool = False,
 ) -> List:
     """Perform hybrid search with optional reranking and metadata filtering.
 
@@ -41,8 +82,11 @@ def retrieve(
 
         owns_client = client is None
         try:
+            settings = get_settings()
+            reranker_mode = resolve_reranker_mode(settings.reranker_mode)
+            span.set_attribute("retriever.reranker_mode", reranker_mode)
+
             if owns_client:
-                settings = get_settings()
                 client = weaviate.connect_to_local(
                     host=settings.weaviate_host,
                     port=settings.weaviate_http_port,
@@ -51,26 +95,23 @@ def retrieve(
 
             collection = client.collections.get(collection_name)
 
-            # Metadata filtering
-            search_filter = None
-            if metadata:
-                filter_list = [
-                    Filter.by_property(key).contains_any([value])
-                    for key, value in metadata.items()
-                ]
-                search_filter = Filter.any_of(filter_list)
+            search_filter = _build_search_filter(metadata)
 
-            # Hybrid search
             results = collection.query.hybrid(
                 query=query,
                 filters=search_filter,
                 alpha=alpha,
                 limit=top_k,
-                rerank=Rerank(prop="text", query=query) if top_k_reranker else None,
+                rerank=_weaviate_rerank(query, reranker_mode, top_k_reranker),
                 return_metadata=MetadataQuery(score=True, distance=True),
             )
-            final_results = (
-                results.objects[:top_k_reranker] if top_k_reranker else results.objects
+
+            final_results = _apply_reranking(
+                query,
+                results.objects,
+                top_k_reranker,
+                settings,
+                reranker_mode,
             )
 
             # Record retrieval outcome
@@ -83,6 +124,8 @@ def retrieve(
             span.set_attribute("retriever.error", str(e))
             span.record_exception(e)
             logger.error(f"Retrieval failed: {e}")
+            if raise_errors:
+                raise
             return []
 
         finally:

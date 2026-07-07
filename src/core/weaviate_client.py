@@ -31,6 +31,11 @@ def get_weaviate_client() -> weaviate.WeaviateClient:
     return _global_client
 
 
+def is_weaviate_connected() -> bool:
+    """Return whether the global Weaviate client is connected."""
+    return _global_client is not None and _global_client.is_connected()
+
+
 def close_weaviate():
     """Explicitly close the Weaviate connection (used in lifespan)."""
     global _global_client

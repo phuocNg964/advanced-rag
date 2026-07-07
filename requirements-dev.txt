@@ -1,4 +1,14 @@
-# Development & notebook dependencies (not required by src/)
+# ============================================================
+# WARNING: This file is a pip compatibility fallback ONLY.
+# It may diverge from the locked dependency graph in uv.lock.
+#
+# Preferred install (reproducible, includes dev/eval deps):
+#   uv sync --frozen
+#
+# Only use pip as a last resort when uv is unavailable.
+# ============================================================
+
+# Development & eval dependencies (not required by src/)
 -r requirements.txt
 
 # Additional LangChain integrations
@@ -8,16 +18,14 @@ langchain-pymupdf4llm
 langchain-weaviate==0.0.3
 langchain-unstructured==0.1.4
 
-# Embeddings (for notebooks)
-langchain-huggingface==0.1.2
-sentence-transformers==3.3.1
-
 # Database
 SQLAlchemy==2.0.35
 
 # Evaluation framework
+pytest
 arize-phoenix[evals]
 pandas>=2.0.0
 ragas
 litellm
 tiktoken==0.12.0
+

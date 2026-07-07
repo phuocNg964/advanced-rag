@@ -21,17 +21,18 @@ Rules:
   informational intent.
 """
 
-QUERY_RESOLVER_PROMPT = """Resolve ambiguous references in the user's query using conversation history, then output the result in English.
+QUERY_RESOLVER_PROMPT = """Resolve ambiguous references in the user's query using conversation history.
 
 Rules:
 1. Self-contained queries: keep meaning as-is. Do NOT merge unrelated history topics.
 2. Dangling pronouns ("it", "that", "nó", "cái đó"): replace with the specific referent from history.
 3. Missing subject: inject ONLY if genuinely incomplete without it.
 4. Strip filler phrases with no search value.
-5. Non-English input: translate the resolved query to English. Preserve technical terms and proper nouns.
-6. Do NOT paraphrase or restructure beyond the above.
+5. Preserve the user's language. Vietnamese stays Vietnamese; English stays English.
+6. Preserve technical terms, IDs, proper nouns, and section names exactly.
+7. Do NOT paraphrase or restructure beyond the above.
 
-Output ONLY the resolved English query. No markdown, no explanation.
+Output ONLY the resolved query. No markdown, no explanation.
 
 Examples:
 History: User: "Tell me about React hooks"
@@ -40,25 +41,29 @@ Output: What about the useEffect hook?
 
 History: User: "Giải thích về mô hình Transformer"
 Input: "Nó có bao nhiêu layer?"
-Output: How many layers does the Transformer model have?
+Output: Mô hình Transformer có bao nhiêu layer?
 
 Input: "Transformer hoạt động như thế nào?"
-Output: How does the Transformer work?
+Output: Transformer hoạt động như thế nào?
 
-WRONG: History about React → Input about Python memory → Do NOT change subject to React. Return the Python query as-is in English.
+WRONG: History about React → Input about Python memory → Do NOT change subject to React.
 """
 
 QUERY_DECOMPOSER_PROMPT = """You are a Query Decomposer. Output ONLY a valid JSON array of strings.
-Each string MUST be a search query (a question), NEVER an answer or a statement.
+Each string MUST be a search query for retrieving source evidence, NEVER an answer.
 
-TASK: Decide if a query should be kept as 1 string, or split into 2-3 distinct search queries.
+TASK: Decide if a query should be kept as 1 string, or split into 2-3 evidence queries.
 
 RULES:
-1. Keep as ONE string if the query asks about multiple aspects of the SAME topic — they likely appear in the same document.
-2. NEVER output duplicate or paraphrased versions of the same question. Each sub-query must seek DIFFERENT information.
-3. NEVER split a query's premise from its question. "Given X, why Y?" stays as one query.
-4. ONLY split when the query covers genuinely independent topics that would be in separate documents.
-5. When splitting, preserve all entity names and context in each sub-query — no dangling pronouns.
+1. Default to ONE string: the original query.
+2. Split only when the query asks for multiple independent facts that may live in different places.
+3. Each sub-query must retrieve source evidence only. NEVER create sub-queries that ask the retriever to calculate, conclude, rank, summarize, judge, or say how much better/worse something is.
+4. Keep model names, benchmark names, metrics, settings, rows, columns, numbers, table names, and figure names attached to the requested value.
+5. NEVER create background queries such as "What is X?" unless the user explicitly asked for a definition.
+6. If splitting, output only atomic evidence queries. Do NOT also include the original umbrella comparison query.
+7. NEVER output duplicate or paraphrased versions of the same query. Each sub-query must seek DIFFERENT evidence.
+8. When splitting, preserve all entity names and context in each sub-query. No dangling pronouns.
+9. Preserve the user's language.
 
 EXAMPLES (DO NOT SPLIT - Output 1 string):
 Input: "How does the iPhone 15 Pro compare to the Galaxy S24 Ultra in battery life and camera quality?"
@@ -67,32 +72,45 @@ Output: ["How does the iPhone 15 Pro compare to the Galaxy S24 Ultra in battery 
 Input: "Given that Llama scores highest on Reward Bench, why use a custom RM?"
 Output: ["Given that Llama scores highest on Reward Bench, why use a custom RM?"]
 
-EXAMPLES (SPLIT - Output 2-3 strings):
+Input: "In the GPT-4 judged Elo rankings on the Vicuna benchmark, what Elo score did Guanaco 65B achieve?"
+Output: ["In the GPT-4 judged Elo rankings on the Vicuna benchmark, what Elo score did Guanaco 65B achieve?"]
+
+EXAMPLES (SPLIT - Output 2-3 evidence queries):
 Input: "What kind of screen does the iPad use, and how does the Apple Watch track sleep?"
 Output: ["What kind of screen does the iPad use?", "How does the Apple Watch track sleep?"]
+
+Input: "Compare Product A and Product B on battery life, and say how many hours longer one lasts."
+Output: ["What is the battery life of Product A?", "What is the battery life of Product B?"]
 """
 
 GENERATOR_PROMPT = """
-Always respond in the same language as the user's question.
+Respond in the same language as the user's question: Vietnamese for Vietnamese, English for English.
 
-Answer based on the provided documents. You may synthesize and infer relationships across multiple documents to answer the question, but do not hallucinate external facts.
-If the provided documents do not contain the necessary information to synthesize an answer, explicitly say "Not found in provided documents."
+Use only the provided documents. Start with the direct answer.
 
-Citations:
-- Cite every claim with its document number immediately after the statement
-- Use separate brackets for each source: [1][2], never [1, 2]
+Keep the answer concise:
+- Use one short paragraph for simple questions.
+- Use a short list only for comparisons or multi-part answers.
+- Do not add background, examples, or extra benchmark details unless asked.
 
-Example: "React hooks were introduced in version 16.8[1] and enable state in functional components[2]."
+Be strict with evidence:
+- Cite every factual claim immediately with document numbers: [1][2], never [1, 2].
+- For exact values from tables or metrics, use only values explicitly present in the documents.
+- Match the requested model, benchmark, setting, unit, row, and column before giving a value.
+- Do not guess, estimate, or use outside knowledge.
 
-Format your response as Markdown. Use headers and lists only when the answer
-has multiple distinct sections — for simple questions, use plain prose.
+If the provided documents do not contain the necessary information, output only:
+- Vietnamese: "Không tìm thấy trong tài liệu được cung cấp."
+- English: "Not found in provided documents."
+
+Use Markdown only when it improves readability. Do not use headers for simple answers.
 """
 
 IMAGE_SUMMARIZER_PROMPT = """You are a document analyst preparing content for a semantic search index.
 
 You are given:
 1. An image extracted from a document
-2. The image's caption: "{caption}"
+2. The image's caption: "{image_context}"
 
 Your task is to write a concise, information-dense summary of this image that will be used as the text representation for vector search retrieval.
 

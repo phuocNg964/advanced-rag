@@ -8,12 +8,6 @@ llms:
     max_retries: 3
     # fallbacks:
     #   - backup_generator
-      
-  backup_generator:
-    provider: openai
-    model: gpt-4o-mini
-    temperature: 0.1
-    max_retries: 2
 
   resolver:
     provider: groq
@@ -46,3 +40,21 @@ llms:
     model_kwargs:
       top_p: 0.90
     max_retries: 3
+
+  # Example local Ollama profile:
+  # rag_generator:
+  #   provider: ollama
+  #   model: llama3.1:8b
+  #   temperature: 0.1
+  #   model_kwargs:
+  #     base_url: http://host.docker.internal:11434
+
+  # Example local HuggingFace profile:
+  # rag_generator:
+  #   provider: huggingface
+  #   model: microsoft/Phi-3-mini-4k-instruct
+  #   temperature: 0.1
+  #   model_kwargs:
+  #     task: text-generation
+  #     pipeline_kwargs:
+  #       max_new_tokens: 512

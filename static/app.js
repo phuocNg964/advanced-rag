@@ -1,4 +1,4 @@
-/**
+﻿/**
  * RAG Chat Frontend Application
  * Handles collection management, PDF uploads, and chat with citations
  */
@@ -52,6 +52,8 @@ const elements = {
     cancelDeleteDocBtn: document.getElementById('cancelDeleteDocBtn'),
     confirmDeleteDocBtn: document.getElementById('confirmDeleteDocBtn')
 };
+
+const PHOENIX_URL = 'http://localhost:6006';
 
 // ===========================
 // API Functions
@@ -442,7 +444,8 @@ async function uploadFile(file) {
         state.jobs[result.job_id] = {
             filename: file.name,
             status: result.status,
-            message: result.message
+            message: result.message,
+            warnings: result.warnings || []
         };
         renderJobs();
         pollJobStatus(result.job_id);
@@ -463,11 +466,12 @@ function renderJobs() {
         
         let statusIcon = '';
         let statusClass = '';
-        let traceBtn = '';
-        
-        if (job.status === 'completed' && job.trace_id) {
-            traceBtn = `<button class="trace-btn" data-trace-id="${job.trace_id}" title="Copy trace ID & open Phoenix">🔍</button>`;
-        }
+        const traceBtn = renderTraceButton(job.trace_id);
+        const warnings = job.warnings || [];
+        const warningLabel = warnings.length === 1 ? warnings[0] : `${warnings.length} warnings`;
+        const warningHtml = warnings.length
+            ? `<div class="job-warning" title="${escapeAttr(warnings.join('\n'))}">${escapeHtml(warningLabel)}</div>`
+            : '';
 
         switch (job.status) {
             case 'queued':
@@ -492,40 +496,20 @@ function renderJobs() {
             item.innerHTML = `
                 <span class="filename">${job.filename}</span>
                 <span class="status ${statusClass}">${statusIcon}</span>
+                ${warningHtml}
             `;
             elements.jobsList.appendChild(item);
-            
-            // Add trace button click handler if it exists
-            const btn = item.querySelector('.trace-btn');
-            if (btn) {
-                btn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const traceId = btn.dataset.traceId;
-                    navigator.clipboard.writeText(traceId);
-                    window.open('http://localhost:6006', '_blank');
-                    btn.textContent = '✅';
-                    setTimeout(() => { btn.textContent = '🔍'; }, 2000);
-                });
-            }
         } else {
             const statusSpan = jobEl.querySelector('.status');
+            const existingWarning = jobEl.querySelector('.job-warning');
+            if (existingWarning) existingWarning.remove();
+            if (warningHtml) {
+                jobEl.insertAdjacentHTML('beforeend', warningHtml);
+            }
             // Only update if status class changed to avoid restarting animation
             if (!statusSpan.classList.contains(statusClass)) {
                 statusSpan.className = `status ${statusClass}`;
                 statusSpan.innerHTML = statusIcon;
-                
-                // Add trace button click handler if it exists
-                const btn = jobEl.querySelector('.trace-btn');
-                if (btn) {
-                    btn.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        const traceId = btn.dataset.traceId;
-                        navigator.clipboard.writeText(traceId);
-                        window.open('http://localhost:6006', '_blank');
-                        btn.textContent = '✅';
-                        setTimeout(() => { btn.textContent = '🔍'; }, 2000);
-                    });
-                }
             }
         }
     });
@@ -537,6 +521,7 @@ async function pollJobStatus(jobId) {
             const status = await API.getJobStatus(jobId);
             state.jobs[jobId].status = status.status;
             state.jobs[jobId].message = status.message;
+            state.jobs[jobId].warnings = status.warnings || [];
             
             // Critical fix: map trace_id from the backend response so renderJobs can display the button
             if (status.trace_id) {
@@ -664,11 +649,7 @@ function renderMessages() {
             }
             // Add response time if available
             if (msg.responseTime) {
-                let traceBtn = '';
-                if (msg.traceId) {
-                    traceBtn = `<button class="trace-btn" data-trace-id="${msg.traceId}"
-                        title="Copy trace ID & open Phoenix">🔍</button>`;
-                }
+                let traceBtn = renderTraceButton(msg.traceId);
                 responseTimeHtml = `<div class="response-time">⏱️ ${msg.responseTime}s${traceBtn}</div>`;
             }
         } else {
@@ -688,19 +669,20 @@ function renderMessages() {
     // Render LaTeX math in chat messages
     renderLatex();
 
-    // Add trace button handlers
-    document.querySelectorAll('.trace-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const traceId = btn.dataset.traceId;
-            navigator.clipboard.writeText(traceId);
-            window.open('http://localhost:6006', '_blank');
-            btn.textContent = '✅';
-            setTimeout(() => { btn.textContent = '🔍'; }, 2000);
-        });
-    });
-
     scrollToBottom();
+}
+
+function renderTraceButton(traceId) {
+    if (!traceId) return '';
+    return `<button class="trace-btn" data-trace-id="${escapeAttr(traceId)}" title="Copy trace ID & open Phoenix">Trace</button>`;
+}
+
+function openTrace(traceId, button) {
+    if (!traceId) return;
+    navigator.clipboard.writeText(traceId);
+    window.open(PHOENIX_URL, '_blank');
+    button.textContent = 'Copied';
+    setTimeout(() => { button.textContent = 'Trace'; }, 2000);
 }
 
 function parseCitations(text, docs) {
@@ -708,11 +690,12 @@ function parseCitations(text, docs) {
         const index = parseInt(num) - 1;
         if (index >= 0 && index < docs.length) {
             const doc = docs[index];
+            const page = doc.page_number || '';
             return `<span class="citation" 
                 data-index="${index}"
                 data-type="${doc.type || 'text'}"
                 data-source="${escapeAttr(doc.source || '')}"
-                data-page="${doc.page_number || ''}"
+                data-page="${escapeAttr(String(page))}"
                 data-text="${escapeAttr(doc.text || '')}"
                 data-image="${escapeAttr(doc.image_path || '')}"
             >${match}</span>`;
@@ -749,14 +732,12 @@ function showCitationTooltip(e) {
     `;
 
     const contentEl = tooltip.querySelector('.tooltip-content');
-    if (type === 'Image' || type === 'Table') {
-        // Image or Table - clickable image that opens in new tab
+    if (type.toLowerCase() === 'image' && imagePath) {
         const imageUrl = getImageUrl(imagePath);
         contentEl.innerHTML = imageUrl
             ? `<a href="${imageUrl}" target="_blank" title="Open image in new tab"><img src="${imageUrl}" alt="Citation image" onerror="this.parentElement.innerHTML='<p>Image not available</p>'"></a>`
             : '<p>Image not available</p>';
     } else {
-        // Text types (NarrativeText, Title, ListItem, etc.) - show text content
         contentEl.innerHTML = `<p>${escapeHtml(text)}</p>`;
     }
 
@@ -830,6 +811,10 @@ function getFilename(path) {
     return path.split(/[\\/]/).pop();
 }
 
+function encodePathSegments(path) {
+    return path.split('/').map(segment => encodeURIComponent(segment)).join('/');
+}
+
 // Convert source path to relative URL for serving PDFs
 function getSourceUrl(path) {
     if (!path) return '';
@@ -838,12 +823,12 @@ function getSourceUrl(path) {
     // If it's an absolute path, extract relative part from 'data/raw'
     const match = normalizedPath.match(/data\/raw\/(.+)$/);
     if (match) {
-        return `/data/raw/${match[1]}`;
+        return `/data/raw/${encodePathSegments(match[1])}`;
     }
 
     // If it's already a relative path like "collection/file.pdf" (new logic)
     if (!normalizedPath.includes(':') && normalizedPath.includes('/')) {
-        return `/data/raw/${normalizedPath}`;
+        return `/data/raw/${encodePathSegments(normalizedPath)}`;
     }
 
     // Fallback: try to find it in the active collection first, then root
@@ -882,11 +867,11 @@ function getImageUrl(imagePath) {
     //   Windows: "E:/.../data/processed/Col/doc/fig.png" → "Col/doc/fig.png"
     const match = normalized.match(/data\/processed\/(.+)$/);
     if (match) {
-        return `/data/processed/${match[1]}`;
+        return `/data/processed/${encodePathSegments(match[1])}`;
     }
 
     // Pure relative path (new format after ingestion fix): "Col/doc/fig.png"
-    return `/data/processed/${normalized}`;
+    return `/data/processed/${encodePathSegments(normalized)}`;
 }
 
 // ===========================
@@ -945,6 +930,13 @@ function initEventListeners() {
     elements.messageInput.addEventListener('input', () => {
         elements.messageInput.style.height = 'auto';
         elements.messageInput.style.height = Math.min(elements.messageInput.scrollHeight, 150) + 'px';
+    });
+
+    document.addEventListener('click', (e) => {
+        const traceBtn = e.target.closest('.trace-btn');
+        if (!traceBtn) return;
+        e.stopPropagation();
+        openTrace(traceBtn.dataset.traceId, traceBtn);
     });
 }
 
