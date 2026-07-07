@@ -11,6 +11,51 @@ def load_gold_dataset(path: Path) -> list[dict]:
                 dataset.append(json.loads(line))
     return dataset
 
+def sample_varied_dataset(dataset: list[dict], sample_size: int) -> list[dict]:
+    """Deterministically sample across question types and rough difficulty."""
+    if sample_size <= 0 or sample_size >= len(dataset):
+        return list(dataset)
+
+    buckets = defaultdict(list)
+    for index, item in enumerate(dataset):
+        qtype = item.get("question_type") or "unknown"
+        difficulty_proxy = len(item.get("user_input", "")) + len(item.get("reference_answer", ""))
+        buckets[qtype].append((difficulty_proxy, index, item))
+
+    for items in buckets.values():
+        items.sort(key=lambda row: (row[0], row[1]))
+
+    quotas = {qtype: min(len(items), sample_size // len(buckets)) for qtype, items in buckets.items()}
+    selected_count = sum(quotas.values())
+
+    while selected_count < sample_size:
+        candidates = [
+            (len(items) - quotas[qtype], len(items), qtype)
+            for qtype, items in buckets.items()
+            if quotas[qtype] < len(items)
+        ]
+        if not candidates:
+            break
+        _, _, qtype = max(candidates)
+        quotas[qtype] += 1
+        selected_count += 1
+
+    sampled = []
+    for qtype, quota in quotas.items():
+        items = buckets[qtype]
+        if quota <= 0:
+            continue
+        if quota == 1:
+            sampled.append(items[len(items) // 2])
+            continue
+
+        last = len(items) - 1
+        positions = [round(i * last / (quota - 1)) for i in range(quota)]
+        sampled.extend(items[pos] for pos in positions)
+
+    sampled.sort(key=lambda row: row[1])
+    return [item for _, _, item in sampled[:sample_size]]
+
 def format_contexts(retrieved_documents: list) -> list[str]:
     """Extract text representations from Weaviate document objects."""
     contexts = []
@@ -18,13 +63,9 @@ def format_contexts(retrieved_documents: list) -> list[str]:
         props = doc.properties if hasattr(doc, "properties") else doc
         doc_type = props.get("type", "")
 
-        if doc_type == "Image":
+        if doc_type.lower() == "image":
             text = props.get("text", "")
-            caption = props.get("caption", "")
-            if text and text != caption:
-                ctx = f"[IMAGE] {caption}\n{text}" if caption else text
-            else:
-                ctx = f"[IMAGE] {caption}" if caption else text
+            ctx = f"[IMAGE] {text}" if text else ""
         else:
             ctx = props.get("text", "")
 

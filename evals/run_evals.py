@@ -3,53 +3,67 @@ RAGAS Evaluation Orchestrator for Agentic RAG using Phoenix Experiments.
 
 Usage:
     python -m evals.run_evals --collection <name> --dataset <path>
+    python -m evals.run_evals --mode api --collection <name> --dataset <path>
     python -m evals.run_evals --collection <name> --dataset <path> --eval-model gpt-4o --emb-model text-embedding-3-small
 """
 
 import argparse
 import asyncio
-import warnings
-warnings.filterwarnings("ignore")
-
 import os
 import re
+import requests
 import sys
 import time
+import warnings
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
+
 import pandas as pd
+
+warnings.filterwarnings("ignore")
 
 # Ensure project root is importable
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # noqa: E402
 load_dotenv(PROJECT_ROOT / ".env")
 
 os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://127.0.0.1:4317"
 os.environ["PHOENIX_BASE_URL"] = "http://127.0.0.1:6006"
 
-from phoenix.otel import register as phoenix_register
-from phoenix.client import Client as PhoenixClient, AsyncClient
-from openinference.instrumentation.langchain import LangChainInstrumentor
+from phoenix.otel import register as phoenix_register  # noqa: E402
+from phoenix.client import Client as PhoenixClient, AsyncClient  # noqa: E402
+from openinference.instrumentation.langchain import LangChainInstrumentor  # noqa: E402
+from opentelemetry.propagate import inject  # noqa: E402
 
-from src.agentic_rag.agent_workflow import AgenticRAG
-from src.core.weaviate_client import init_weaviate, close_weaviate, get_weaviate_client
-from src.core.logger import setup_logging, get_logger
+from src.agentic_rag.agent_workflow import AgenticRAG  # noqa: E402
+from src.components.reranker import get_reranker  # noqa: E402
+from src.components.retriever import resolve_reranker_mode  # noqa: E402
+from src.core.config import get_settings  # noqa: E402
+from src.core.weaviate_client import init_weaviate, close_weaviate, get_weaviate_client  # noqa: E402
+from src.core.logger import setup_logging, get_logger  # noqa: E402
 
-from evals.utils.io import load_gold_dataset, format_contexts, save_results
-from evals.metrics.ragas_scorers import RagasEvaluators
+from evals.utils.io import load_gold_dataset, sample_varied_dataset, format_contexts, save_results  # noqa: E402
+from evals.metrics.ragas_scorers import RagasEvaluators  # noqa: E402
 
 logger = get_logger(__name__)
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
+
+def _check_api_ready(base_url: str, timeout: int) -> None:
+    response = requests.get(f"{base_url.rstrip('/')}/ready", timeout=timeout)
+    response.raise_for_status()
+
+
 async def run_rag_pipeline(rag: AgenticRAG, question: str, collection_name: str) -> dict:
     state = {"query": question, "collection_name": collection_name, "messages": []}
     
-    state.update(rag.query_resolver(state))
-    state.update(rag.query_decomposer(state))
-    state.update(rag.retriever(state))
+    state.update(await rag.query_resolver(state))
+    state.update(await rag.query_decomposer(state))
+    state.update(await rag.retriever(state))
     state.update(await rag.rag_generator(state))
 
     response_text = ""
@@ -65,12 +79,44 @@ async def run_rag_pipeline(rag: AgenticRAG, question: str, collection_name: str)
         "decomposed_queries": state.get("decomposed_queries", []),
     }
 
+
+async def run_api_pipeline(
+    question: str,
+    collection_name: str,
+    base_url: str,
+    timeout: int,
+    session_id: str,
+) -> dict:
+    def _request_chat() -> dict:
+        headers = {}
+        inject(headers)
+        response = requests.post(
+            f"{base_url.rstrip('/')}/collections/{collection_name}/chat",
+            json={"message": question, "session_id": session_id},
+            headers=headers,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    data = await asyncio.to_thread(_request_chat)
+    retrieved_documents = data.get("retrieved_documents", [])
+    return {
+        "response": data.get("response", ""),
+        "retrieved_contexts": format_contexts(retrieved_documents),
+    }
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Run RAGAS evaluation via Phoenix Experiments")
     parser.add_argument("--collection", required=True, help="Weaviate collection name to query")
     parser.add_argument("--dataset", required=True, help="Path to the JSONL gold dataset file")
+    parser.add_argument("--mode", choices=["api", "internal"], default="api", help="Evaluate Docker/API deployment or internal pipeline")
+    parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="API base URL when --mode api")
+    parser.add_argument("--timeout", type=int, default=120, help="HTTP timeout in seconds when --mode api")
     parser.add_argument("--run-name", type=str, default="baseline", help="Name of this experiment")
     parser.add_argument("--dry-run", type=int, nargs="?", const=1, default=False, help="Run on N samples only")
+    parser.add_argument("--concurrency", type=int, default=1, help="Number of samples to evaluate concurrently")
     parser.add_argument("--eval-model", type=str, default="gpt-4o-mini", help="Judge LLM (default: gpt-4o-mini)")
     parser.add_argument("--emb-model", type=str, default="text-embedding-3-small", help="Judge Embedding (default: text-embedding-3-small)")
     args = parser.parse_args()
@@ -90,10 +136,18 @@ async def main():
     logger.info(f"Loaded {len(gold_data)} samples from {dataset_path.name}")
 
     dataset_name = dataset_path.stem
+    experiment_data = gold_data
+    phoenix_dry_run = False
+    if args.dry_run is not False:
+        experiment_data = sample_varied_dataset(gold_data, args.dry_run)
+        dataset_name = f"{dataset_name}_sample{len(experiment_data)}_varied"
+        distribution = Counter(item.get("question_type", "unknown") for item in experiment_data)
+        logger.info(f"Using varied sample of {len(experiment_data)}: {dict(distribution)}")
+
     try:
         px_dataset = px_client.datasets.create_dataset(
             name=dataset_name,
-            dataframe=pd.DataFrame(gold_data),
+            dataframe=pd.DataFrame(experiment_data),
             input_keys=["user_input"],
             output_keys=["reference_answer"],
             metadata_keys=["question_type"],
@@ -104,24 +158,52 @@ async def main():
         px_dataset = px_client.datasets.get_dataset(dataset=dataset_name)
         logger.info(f"Using existing dataset: {px_dataset.id}")
 
-    init_weaviate()
-    client = get_weaviate_client()
-    if not client.collections.exists(args.collection):
-        logger.error(f"Weaviate collection '{args.collection}' does not exist!")
-        close_weaviate()
-        sys.exit(1)
+    if args.mode == "api":
+        try:
+            _check_api_ready(args.base_url, args.timeout)
+        except Exception as exc:
+            logger.error("API is not ready at %s: %s", args.base_url, exc)
+            sys.exit(1)
+    else:
+        init_weaviate()
+        client = get_weaviate_client()
+        if not client.collections.exists(args.collection):
+            logger.error(f"Weaviate collection '{args.collection}' does not exist!")
+            close_weaviate()
+            sys.exit(1)
 
     try:
-        rag = AgenticRAG()
+        rag = AgenticRAG() if args.mode == "internal" else None
         task_results = []
         evaluators = RagasEvaluators(judge_model=args.eval_model, embedding_model=args.emb_model)
+
+        if args.mode == "internal":
+            settings = get_settings()
+
+        if (
+            args.mode == "internal"
+            and settings.warmup_reranker
+            and resolve_reranker_mode(settings.reranker_mode) == "app"
+        ):
+            logger.info("Warming up app reranker before timed eval run")
+            await asyncio.to_thread(get_reranker(settings).warmup)
+            logger.info("App reranker warmup complete")
 
         async def rag_task(example):
             question = example.input["user_input"]
             max_retries = 5
             for attempt in range(max_retries):
                 try:
-                    result = await run_rag_pipeline(rag, question, args.collection)
+                    if args.mode == "api":
+                        result = await run_api_pipeline(
+                            question=question,
+                            collection_name=args.collection,
+                            base_url=args.base_url,
+                            timeout=args.timeout,
+                            session_id=f"eval-{args.run_name}",
+                        )
+                    else:
+                        result = await run_rag_pipeline(rag, question, args.collection)
                     
                     question_type = ""
                     if hasattr(example, "metadata") and example.metadata:
@@ -151,9 +233,13 @@ async def main():
                     raise
 
         logger.info(f"Running experiment: {args.run_name}")
+        logger.info(f"Mode:        {args.mode}")
+        if args.mode == "api":
+            logger.info(f"API URL:     {args.base_url}")
         logger.info(f"Collection:  {args.collection}")
         logger.info(f"LLM judge:   {args.eval_model}")
         logger.info(f"Embeddings:  {args.emb_model}")
+        logger.info(f"Concurrency: {args.concurrency}")
         start = time.time()
         
         await px_async_client.experiments.run_experiment(
@@ -166,8 +252,8 @@ async def main():
                 evaluators.answer_relevancy,
             ],
             experiment_name=args.run_name,
-            concurrency=2,
-            dry_run=args.dry_run if args.dry_run is not False else False,
+            concurrency=args.concurrency,
+            dry_run=phoenix_dry_run,
         )
 
         elapsed = time.time() - start
@@ -178,7 +264,12 @@ async def main():
             "experiment_name": args.run_name,
             "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
             "collection": args.collection,
+            "mode": args.mode,
+            "base_url": args.base_url if args.mode == "api" else None,
             "total_samples": len(gold_data),
+            "dataset_samples": len(experiment_data),
+            "sample_strategy": "varied_by_question_type_and_length" if args.dry_run is not False else "full_dataset",
+            "concurrency": args.concurrency,
             "evaluated_samples": len(task_results),
             "elapsed_seconds": round(elapsed, 1),
             "judge_llm": args.eval_model,
@@ -208,7 +299,8 @@ async def main():
         logger.info(f"Phoenix UI       → Datasets & Experiments → {args.run_name}")
 
     finally:
-        close_weaviate()
+        if args.mode == "internal":
+            close_weaviate()
 
 if __name__ == "__main__":
     asyncio.run(main())

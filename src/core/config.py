@@ -26,12 +26,55 @@ class Settings(BaseSettings):
     weaviate_http_port: int = 8080
     weaviate_grpc_port: int = 50051
 
+    # Reranking
+    reranker_mode: str = Field(
+        default="app",
+        description="Reranker mode: weaviate, app, or none",
+    )
+    app_reranker_model: str = Field(
+        default="cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+        description="SentenceTransformers CrossEncoder used when RERANKER_MODE=app",
+    )
+    app_reranker_device: str = Field(
+        default="cpu",
+        description="Device for app-level CrossEncoder reranker",
+    )
+    app_reranker_batch_size: int = Field(
+        default=8,
+        description="Batch size for app-level CrossEncoder reranker",
+    )
+    warmup_reranker: bool = Field(
+        default=True,
+        description="Warm up the app-level reranker during API startup",
+    )
+
+    # Retrieval
+    retrieval_top_k: int = Field(
+        default=20,
+        description="Candidates fetched per query before final reranking",
+    )
+    retrieval_top_k_reranker: int = Field(
+        default=5,
+        description="Final number of retrieved documents after reranking",
+    )
+
+    # Runtime behavior
+    warmup_docling: bool = Field(
+        default=False,
+        description="Warm up the Docling PDF parser during API startup",
+    )
+    max_upload_size_mb: int = Field(
+        default=100,
+        description="Maximum uploaded PDF size in MB",
+    )
+
     # Postgres Persistence
     pg_user: str = Field(default="postgres", description="Postgres user")
     pg_password: str = Field(default="postgres", description="Postgres password")
     pg_database: str = Field(default="agentic-rag", description="Postgres DB name")
-    pg_host: str = Field(default="postgres", description="Postgres host")
+    pg_host: str = Field(default="localhost", description="Postgres host")
     pg_port: int = Field(default=5432, description="Postgres port")
+    pg_pool_max_size: int = Field(default=5, description="Postgres pool max size")
 
     @property
     def pg_url(self) -> str:

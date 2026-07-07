@@ -1,0 +1,11 @@
+---
+# Developer override. Use with:
+# docker compose -f docker-compose.yaml -f docker-compose.dev.yaml --profile cpu --profile production up -d --build
+#
+# The production compose file runs code from the built image. This override mounts
+# local source files so Python/UI changes apply after restarting the API service.
+services:
+  api:
+    volumes:
+      - ./src:/app/src
+      - ./static:/app/static
