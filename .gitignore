@@ -67,6 +67,3 @@ postgres_data/
 
 # Linting Cache
 .ruff_cache/
-
-# Evaluation results (generated output)
-evals/results/

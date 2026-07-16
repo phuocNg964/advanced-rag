@@ -15,9 +15,12 @@ services:
     volumes:
       - weaviate_data:/var/lib/weaviate
     restart: unless-stopped
+    mem_limit: ${WEAVIATE_MEM_LIMIT:-2g}
+    memswap_limit: ${WEAVIATE_MEMSWAP_LIMIT:-2g}
     environment:
       CLUSTER_HOSTNAME: "node1"
       CLUSTER_ADVERTISE_ADDR: "127.0.0.1"
+      GOMEMLIMIT: ${WEAVIATE_GOMEMLIMIT:-1536MiB}
       ENABLE_API_BASED_MODULES: "true"
       ENABLE_MODULES: ${WEAVIATE_ENABLE_MODULES:-text2vec-transformers}
       DEFAULT_VECTORIZER_MODULE: "text2vec-transformers"
@@ -64,8 +67,9 @@ services:
 
   text2vec-transformers-cpu:
     image: cr.weaviate.io/semitechnologies/transformers-inference:baai-bge-m3-onnx
-    profiles: ["cpu"]
     restart: unless-stopped
+    mem_limit: ${TEXT2VEC_MEM_LIMIT:-4g}
+    memswap_limit: ${TEXT2VEC_MEMSWAP_LIMIT:-4g}
     environment:
       ENABLE_CUDA: "0"
     networks:
@@ -95,9 +99,9 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-agentic-rag}
+      POSTGRES_USER: ${PG_USER:-postgres}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-postgres}
+      POSTGRES_DB: ${PG_DATABASE:-agentic-rag}
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
@@ -108,32 +112,18 @@ services:
       timeout: 5s
       retries: 5
 
-  phoenix:
-    image: arizephoenix/phoenix:latest
-    profiles: ["observability"]
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:6006:6006"
-      - "127.0.0.1:4317:4317"
-    environment:
-      - PHOENIX_WORKING_DIR=/mnt/data
-    volumes:
-      - phoenix_data:/mnt/data
-
   api:
     build: .
     restart: unless-stopped
     ports:
       - "127.0.0.1:8000:8000"
-    profiles:
-      - production
     env_file:
       - .env
     environment:
       - ENVIRONMENT=production
       - PG_HOST=postgres
       - WEAVIATE_HOST=weaviate
-      - PHOENIX_COLLECTOR_ENDPOINT=${DOCKER_PHOENIX_COLLECTOR_ENDPOINT:-http://phoenix:4317}
+      - PHOENIX_COLLECTOR_ENDPOINT=
       - DOCLING_ARTIFACTS_PATH=/opt/docling/models
       - HF_HUB_OFFLINE=1
       - WARMUP_DOCLING=${WARMUP_DOCLING:-false}
@@ -145,7 +135,9 @@ services:
       - WARMUP_RERANKER=${WARMUP_RERANKER:-true}
       - RETRIEVAL_TOP_K=${RETRIEVAL_TOP_K:-20}
       - RETRIEVAL_TOP_K_RERANKER=${RETRIEVAL_TOP_K_RERANKER:-5}
+      - RETRIEVAL_ALPHA=${RETRIEVAL_ALPHA:-0.5}
       - PG_POOL_MAX_SIZE=${PG_POOL_MAX_SIZE:-5}
+
     volumes:
       - ./data/raw:/app/data/raw
       - processed_data:/app/data/processed
@@ -169,8 +161,6 @@ services:
 
 volumes:
   weaviate_data:
-    driver: local
-  phoenix_data:
     driver: local
   postgres_data:
     driver: local

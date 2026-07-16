@@ -35,6 +35,10 @@ class Settings(BaseSettings):
         default="cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
         description="SentenceTransformers CrossEncoder used when RERANKER_MODE=app",
     )
+    weaviate_reranker_model: str = Field(
+        default="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        description="Weaviate reranker-transformers model used when RERANKER_MODE=weaviate",
+    )
     app_reranker_device: str = Field(
         default="cpu",
         description="Device for app-level CrossEncoder reranker",
@@ -56,6 +60,10 @@ class Settings(BaseSettings):
     retrieval_top_k_reranker: int = Field(
         default=5,
         description="Final number of retrieved documents after reranking",
+    )
+    retrieval_alpha: float = Field(
+        default=0.5,
+        description="Hybrid search weight (0=keyword/BM25, 1=vector). Default 0.5 for balanced.",
     )
 
     # Runtime behavior

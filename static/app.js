@@ -12,18 +12,17 @@ const state = {
     documents: [],  // Documents in active collection
     jobs: {},  // job_id -> {filename, status, message}
     messages: [],
-    retrievedDocs: [],  // For citation tooltips
-    sessionId: generateSessionId()
+    sessionId: 'default'
 };
 
-function generateSessionId() {
-    let sid = localStorage.getItem('rag_session_id');
-    if (!sid) {
-        sid = 'session_' + Math.random().toString(36).substring(2, 15);
-        localStorage.setItem('rag_session_id', sid);
-    }
-    return sid;
-}
+const AGENT_STEP_ORDER = [
+    'intent_router',
+    'query_resolver',
+    'query_decomposer',
+    'retriever',
+    'rag_generator',
+    'conversational_llm'
+];
 
 // ===========================
 // DOM Elements
@@ -52,8 +51,6 @@ const elements = {
     cancelDeleteDocBtn: document.getElementById('cancelDeleteDocBtn'),
     confirmDeleteDocBtn: document.getElementById('confirmDeleteDocBtn')
 };
-
-const PHOENIX_URL = 'http://localhost:6006';
 
 // ===========================
 // API Functions
@@ -131,16 +128,7 @@ const API = {
         return res.json();
     },
 
-    async chat(collectionName, message, sessionId) {
-        const res = await fetch(`/collections/${collectionName}/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message, session_id: sessionId })
-        });
-        return res.json();
-    },
-
-    async streamChat(collectionName, message, sessionId, onDocs, onToken, onComplete, onError) {
+    async streamChat(collectionName, message, sessionId, onStep, onDocs, onToken, onComplete, onError) {
         try {
             const response = await fetch(`/collections/${collectionName}/chat/stream`, {
                 method: 'POST',
@@ -170,7 +158,9 @@ const API = {
                         
                         try {
                             const data = JSON.parse(jsonStr);
-                            if (data.type === 'docs') {
+                            if (data.type === 'step') {
+                                onStep(data);
+                            } else if (data.type === 'docs') {
                                 onDocs(data.documents);
                             } else if (data.type === 'chunk') {
                                 onToken(data.text);
@@ -260,7 +250,6 @@ function renderCollections() {
 async function selectCollection(name) {
     state.activeCollection = name;
     state.messages = [];
-    state.retrievedDocs = [];
     state.documents = [];
     state.sessionId = "default";  // Enforce single conversation per collection
 
@@ -311,7 +300,6 @@ async function clearChatHistoryUI() {
     try {
         await API.clearChatHistory(state.activeCollection);
         state.messages = [];
-        state.retrievedDocs = [];
         renderMessages();
     } catch (err) {
         console.error("Failed to clear history", err);
@@ -466,7 +454,6 @@ function renderJobs() {
         
         let statusIcon = '';
         let statusClass = '';
-        const traceBtn = renderTraceButton(job.trace_id);
         const warnings = job.warnings || [];
         const warningLabel = warnings.length === 1 ? warnings[0] : `${warnings.length} warnings`;
         const warningHtml = warnings.length
@@ -480,7 +467,7 @@ function renderJobs() {
                 statusClass = 'status-processing';
                 break;
             case 'completed':
-                statusIcon = `✅ ${traceBtn}`;
+                statusIcon = '✅';
                 statusClass = 'status-completed';
                 break;
             case 'failed':
@@ -523,11 +510,6 @@ async function pollJobStatus(jobId) {
             state.jobs[jobId].message = status.message;
             state.jobs[jobId].warnings = status.warnings || [];
             
-            // Critical fix: map trace_id from the backend response so renderJobs can display the button
-            if (status.trace_id) {
-                state.jobs[jobId].trace_id = status.trace_id;
-            }
-            
             renderJobs();
 
             if (status.status === 'queued' || status.status === 'processing') {
@@ -557,9 +539,14 @@ async function sendMessage() {
 
     // Show loading
     const loadingId = 'loading-' + Date.now();
+    const agentSteps = [];
     elements.chatMessages.insertAdjacentHTML('beforeend', `
-        <div class="message assistant" id="${loadingId}">
-            <span class="loading"></span> Thinking...
+        <div class="message assistant pending-agent" id="${loadingId}">
+            <div class="pending-title">
+                <span class="loading"></span>
+                <span>Working through agent steps...</span>
+            </div>
+            <div class="agent-progress"></div>
         </div>
     `);
     scrollToBottom();
@@ -579,31 +566,31 @@ async function sendMessage() {
         };
         state.messages.push(assistantMsg);
         
-        let docsReceived = false;
+        let responseStarted = false;
 
         await API.streamChat(
             state.activeCollection, 
             message, 
             state.sessionId,
+            (step) => {
+                updateAgentProgress(agentSteps, step);
+                renderAgentProgress(loadingId, agentSteps);
+            },
             (docs) => {
-                document.getElementById(loadingId)?.remove();
                 assistantMsg.docs = docs;
-                state.retrievedDocs = docs;
-                docsReceived = true;
-                renderMessages();
             },
             (token) => {
-                if (!docsReceived) {
+                if (!responseStarted) {
                     document.getElementById(loadingId)?.remove();
-                    docsReceived = true;
+                    responseStarted = true;
                 }
                 assistantMsg.content += token;
                 renderMessages();
             },
-            (data) => {
+            () => {
+                document.getElementById(loadingId)?.remove();
                 const endTime = performance.now();
                 assistantMsg.responseTime = ((endTime - startTime) / 1000).toFixed(2);
-                assistantMsg.traceId = data?.trace_id || null;
                 renderMessages();
             },
             (errMsg) => {
@@ -626,6 +613,44 @@ async function sendMessage() {
     }
 }
 
+function updateAgentProgress(steps, step) {
+    const existing = steps.find(item => item.node === step.node);
+    const nextStep = {
+        node: step.node,
+        label: step.label || step.node,
+        status: step.status || 'running'
+    };
+
+    if (existing) {
+        existing.label = nextStep.label;
+        existing.status = nextStep.status;
+    } else {
+        steps.push(nextStep);
+        steps.sort((a, b) => {
+            const aIndex = AGENT_STEP_ORDER.indexOf(a.node);
+            const bIndex = AGENT_STEP_ORDER.indexOf(b.node);
+            return (aIndex === -1 ? 999 : aIndex) - (bIndex === -1 ? 999 : bIndex);
+        });
+    }
+}
+
+function renderAgentProgress(loadingId, steps) {
+    const loadingEl = document.getElementById(loadingId);
+    if (!loadingEl) return;
+
+    const progressEl = loadingEl.querySelector('.agent-progress');
+    if (!progressEl) return;
+
+    progressEl.innerHTML = steps.map(step => `
+        <div class="agent-step ${escapeAttr(step.status)}">
+            <span class="agent-step-marker"></span>
+            <span class="agent-step-label">${escapeHtml(step.label)}</span>
+        </div>
+    `).join('');
+
+    scrollToBottom();
+}
+
 function renderMessages() {
     if (state.messages.length === 0) {
         elements.chatMessages.innerHTML = `
@@ -637,7 +662,7 @@ function renderMessages() {
         return;
     }
 
-    elements.chatMessages.innerHTML = state.messages.map((msg, idx) => {
+    elements.chatMessages.innerHTML = state.messages.map((msg) => {
         let content;
         let responseTimeHtml = '';
 
@@ -649,8 +674,7 @@ function renderMessages() {
             }
             // Add response time if available
             if (msg.responseTime) {
-                let traceBtn = renderTraceButton(msg.traceId);
-                responseTimeHtml = `<div class="response-time">⏱️ ${msg.responseTime}s${traceBtn}</div>`;
+                responseTimeHtml = `<div class="response-time">⏱️ ${msg.responseTime}s</div>`;
             }
         } else {
             // For user messages: escape HTML for safety
@@ -666,23 +690,7 @@ function renderMessages() {
         el.addEventListener('mouseleave', hideCitationTooltip);
     });
 
-    // Render LaTeX math in chat messages
-    renderLatex();
-
     scrollToBottom();
-}
-
-function renderTraceButton(traceId) {
-    if (!traceId) return '';
-    return `<button class="trace-btn" data-trace-id="${escapeAttr(traceId)}" title="Copy trace ID & open Phoenix">Trace</button>`;
-}
-
-function openTrace(traceId, button) {
-    if (!traceId) return;
-    navigator.clipboard.writeText(traceId);
-    window.open(PHOENIX_URL, '_blank');
-    button.textContent = 'Copied';
-    setTimeout(() => { button.textContent = 'Trace'; }, 2000);
 }
 
 function parseCitations(text, docs) {
@@ -737,6 +745,8 @@ function showCitationTooltip(e) {
         contentEl.innerHTML = imageUrl
             ? `<a href="${imageUrl}" target="_blank" title="Open image in new tab"><img src="${imageUrl}" alt="Citation image" onerror="this.parentElement.innerHTML='<p>Image not available</p>'"></a>`
             : '<p>Image not available</p>';
+    } else if (type.toLowerCase() === 'table') {
+        contentEl.innerHTML = `<div class="tooltip-markdown">${parseSafeMarkdown(text)}</div>`;
     } else {
         contentEl.innerHTML = `<p>${escapeHtml(text)}</p>`;
     }
@@ -844,16 +854,8 @@ function parseMarkdown(text) {
     return marked.parse(text);
 }
 
-function renderLatex() {
-    renderMathInElement(elements.chatMessages, {
-        delimiters: [
-            { left: '$$', right: '$$', display: true },
-            { left: '$', right: '$', display: false },
-            { left: '\\(', right: '\\)', display: false },
-            { left: '\\[', right: '\\]', display: true }
-        ],
-        throwOnError: false
-    });
+function parseSafeMarkdown(text) {
+    return marked.parse(escapeHtml(text));
 }
 
 // Convert image path to URL for serving via FastAPI StaticFiles at /data/processed
@@ -932,12 +934,6 @@ function initEventListeners() {
         elements.messageInput.style.height = Math.min(elements.messageInput.scrollHeight, 150) + 'px';
     });
 
-    document.addEventListener('click', (e) => {
-        const traceBtn = e.target.closest('.trace-btn');
-        if (!traceBtn) return;
-        e.stopPropagation();
-        openTrace(traceBtn.dataset.traceId, traceBtn);
-    });
 }
 
 // ===========================

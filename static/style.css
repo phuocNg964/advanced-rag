@@ -17,7 +17,6 @@
     --warning: #f59e0b;
     --danger: #ef4444;
     --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.4);
     --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.5);
     --radius-sm: 8px;
     --radius-md: 12px;
@@ -258,7 +257,6 @@ body {
     animation: spin 0.8s linear infinite;
 }
 
-.status-queued,
 .status-processing {
     color: var(--warning);
 }
@@ -324,12 +322,6 @@ body {
     color: var(--accent-primary);
 }
 
-.document-item .doc-count {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    margin-right: 8px;
-}
-
 .document-item .delete-doc-btn {
     opacity: 0;
     padding: 2px 6px;
@@ -363,24 +355,6 @@ body {
     border-top: 1px solid var(--border-color);
     display: flex;
     align-items: center;
-}
-
-/* Phoenix trace button */
-.trace-btn {
-    background: none;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.75rem;
-    padding: 1px 5px;
-    margin-left: 6px;
-    opacity: 0.5;
-    transition: var(--transition);
-}
-
-.trace-btn:hover {
-    opacity: 1;
-    border-color: rgba(255, 255, 255, 0.4);
 }
 
 /* ===========================
@@ -456,6 +430,65 @@ body {
     border-bottom-left-radius: 4px;
 }
 
+.pending-agent {
+    min-width: 280px;
+}
+
+.pending-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+}
+
+.agent-progress {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.agent-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+}
+
+.agent-step-marker {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    border: 2px solid var(--border-color);
+    flex: 0 0 auto;
+}
+
+.agent-step.running .agent-step-marker {
+    border-color: var(--accent-primary);
+    border-top-color: transparent;
+    animation: spin 0.8s linear infinite;
+}
+
+.agent-step.completed {
+    color: var(--text-primary);
+}
+
+.agent-step.completed .agent-step-marker {
+    border-color: var(--success);
+    background: var(--success);
+}
+
+.agent-step.failed {
+    color: var(--danger);
+}
+
+.agent-step.failed .agent-step-marker {
+    border-color: var(--danger);
+    background: var(--danger);
+}
+
 /* Markdown Styles in Assistant Messages */
 .message.assistant h2 {
     font-size: 1.25rem;
@@ -520,6 +553,39 @@ body {
     color: var(--text-primary);
     font-size: 0.8125rem;
     line-height: 1.5;
+}
+
+.message.assistant table,
+.tooltip-content table {
+    display: block;
+    max-width: 100%;
+    margin: 10px 0;
+    border-collapse: collapse;
+    overflow-x: auto;
+    white-space: nowrap;
+    font-size: 0.875rem;
+}
+
+.message.assistant th,
+.message.assistant td,
+.tooltip-content th,
+.tooltip-content td {
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    text-align: left;
+    vertical-align: top;
+}
+
+.message.assistant th,
+.tooltip-content th {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.message.assistant td,
+.tooltip-content td {
+    color: var(--text-secondary);
 }
 
 .message.assistant strong {
@@ -679,6 +745,10 @@ body {
     max-width: 100%;
     border-radius: var(--radius-sm);
     margin-top: 8px;
+}
+
+.tooltip-markdown p {
+    margin: 4px 0;
 }
 
 /* ===========================

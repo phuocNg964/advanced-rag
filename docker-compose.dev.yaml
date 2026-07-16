@@ -1,11 +1,36 @@
 ---
 # Developer override. Use with:
-# docker compose -f docker-compose.yaml -f docker-compose.dev.yaml --profile cpu --profile production up -d --build
+# docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d
 #
 # The production compose file runs code from the built image. This override mounts
 # local source files so Python/UI changes apply after restarting the API service.
 services:
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6006:6006"
+      - "127.0.0.1:4317:4317"
+    environment:
+      - PHOENIX_WORKING_DIR=/mnt/data
+    volumes:
+      - phoenix_data:/mnt/data
+
   api:
+    depends_on:
+      phoenix:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      weaviate:
+        condition: service_started
+    environment:
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:4317
     volumes:
       - ./src:/app/src
       - ./static:/app/static
+      - ./configs:/app/configs
+
+volumes:
+  phoenix_data:
+    driver: local

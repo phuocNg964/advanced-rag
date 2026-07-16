@@ -9,6 +9,13 @@ from src.core.config import get_settings
 logger = get_logger(__name__)
 tracer = trace.get_tracer(__name__)
 
+try:
+    from openinference.semconv.trace import SpanAttributes
+
+    SPAN_KIND = SpanAttributes.OPENINFERENCE_SPAN_KIND
+except ImportError:
+    SPAN_KIND = "openinference.span.kind"
+
 
 def resolve_reranker_mode(mode: str) -> str:
     normalized = mode.lower()
@@ -49,6 +56,22 @@ def _apply_reranking(query: str, objects: list, top_k_reranker: int, settings, r
     return objects[:top_k_reranker]
 
 
+def configured_reranker_model_name(reranker_mode: str, settings) -> str:
+    if reranker_mode == "app":
+        return settings.app_reranker_model
+    if reranker_mode == "weaviate":
+        return settings.weaviate_reranker_model
+    return "none"
+
+
+def _span_reranker_model_name(
+    reranker_mode: str, top_k_reranker: int, settings
+) -> str:
+    if top_k_reranker <= 0 or reranker_mode == "none":
+        return "none"
+    return configured_reranker_model_name(reranker_mode, settings)
+
+
 def retrieve(
     query: str,
     collection_name: str,
@@ -74,17 +97,22 @@ def retrieve(
     Returns:
         List of retrieved document objects, or [] on error
     """
-    with tracer.start_as_current_span("retriever.hybrid_search") as span:
+    with tracer.start_as_current_span("retriever.subquery") as span:
+        span.set_attribute(SPAN_KIND, "RETRIEVER")
         span.set_attribute("retriever.query", query)
-        span.set_attribute("retriever.top_k", top_k)
         span.set_attribute("retriever.alpha", alpha)
-        span.set_attribute("retriever.top_k_reranker", top_k_reranker)
 
         owns_client = client is None
         try:
             settings = get_settings()
             reranker_mode = resolve_reranker_mode(settings.reranker_mode)
-            span.set_attribute("retriever.reranker_mode", reranker_mode)
+            reranker_model_name = _span_reranker_model_name(
+                reranker_mode, top_k_reranker, settings
+            )
+            span.set_attribute(
+                "reranker.model_name",
+                reranker_model_name,
+            )
 
             if owns_client:
                 client = weaviate.connect_to_local(
@@ -106,6 +134,8 @@ def retrieve(
                 return_metadata=MetadataQuery(score=True, distance=True),
             )
 
+            span.set_attribute("retriever.initial_search", len(results.objects))
+
             final_results = _apply_reranking(
                 query,
                 results.objects,
@@ -114,13 +144,16 @@ def retrieve(
                 reranker_mode,
             )
 
-            # Record retrieval outcome
-            span.set_attribute("retriever.results_count", len(final_results))
+            reranked_documents = (
+                len(final_results) if reranker_model_name != "none" else 0
+            )
+            span.set_attribute("reranker.reranked_documents", reranked_documents)
 
             logger.info(f"Retrieved {len(final_results)} results successfully")
             return final_results
 
         except Exception as e:
+            span.set_attribute("retriever.error_type", type(e).__name__)
             span.set_attribute("retriever.error", str(e))
             span.record_exception(e)
             logger.error(f"Retrieval failed: {e}")

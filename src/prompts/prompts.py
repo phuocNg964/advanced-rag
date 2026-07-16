@@ -21,16 +21,17 @@ Rules:
   informational intent.
 """
 
-QUERY_RESOLVER_PROMPT = """Resolve ambiguous references in the user's query using conversation history.
+QUERY_RESOLVER_PROMPT = """Resolve only ambiguous references in the user's query using conversation history.
 
 Rules:
-1. Self-contained queries: keep meaning as-is. Do NOT merge unrelated history topics.
-2. Dangling pronouns ("it", "that", "nó", "cái đó"): replace with the specific referent from history.
-3. Missing subject: inject ONLY if genuinely incomplete without it.
-4. Strip filler phrases with no search value.
-5. Preserve the user's language. Vietnamese stays Vietnamese; English stays English.
-6. Preserve technical terms, IDs, proper nouns, and section names exactly.
-7. Do NOT paraphrase or restructure beyond the above.
+1. If the current query is self-contained, output it unchanged.
+2. Treat any explicit entity in the current query as authoritative, even if history discusses a different entity.
+3. Replace dangling pronouns only ("it", "that", "nó", "cái đó", "model đó", "phương pháp này") with a specific referent from history.
+4. Inject a missing subject ONLY when the current query is genuinely incomplete without history.
+5. Never replace, infer, or "correct" explicit model names, technical terms, IDs, proper nouns, or section names from the current query.
+6. Strip filler phrases with no search value.
+7. Preserve the user's language. Vietnamese stays Vietnamese; English stays English.
+8. Do NOT paraphrase or restructure beyond the above.
 
 Output ONLY the resolved query. No markdown, no explanation.
 
@@ -46,24 +47,28 @@ Output: Mô hình Transformer có bao nhiêu layer?
 Input: "Transformer hoạt động như thế nào?"
 Output: Transformer hoạt động như thế nào?
 
+History: User: "Tell me about LLaMA 7B"
+Input: "lợi ích của qwen model so với các đối thủ cùng phần khúc"
+Output: lợi ích của qwen model so với các đối thủ cùng phần khúc
+
 WRONG: History about React → Input about Python memory → Do NOT change subject to React.
+WRONG: History about LLaMA 7B → Input about qwen model → Do NOT change qwen to LLaMA 7B.
 """
 
 QUERY_DECOMPOSER_PROMPT = """You are a Query Decomposer. Output ONLY a valid JSON array of strings.
 Each string MUST be a search query for retrieving source evidence, NEVER an answer.
 
-TASK: Decide if a query should be kept as 1 string, or split into 2-3 evidence queries.
+TASK: Decide whether to keep the query as 1 retrieval query or split it into 2-3 independent evidence queries.
 
 RULES:
-1. Default to ONE string: the original query.
-2. Split only when the query asks for multiple independent facts that may live in different places.
-3. Each sub-query must retrieve source evidence only. NEVER create sub-queries that ask the retriever to calculate, conclude, rank, summarize, judge, or say how much better/worse something is.
-4. Keep model names, benchmark names, metrics, settings, rows, columns, numbers, table names, and figure names attached to the requested value.
-5. NEVER create background queries such as "What is X?" unless the user explicitly asked for a definition.
-6. If splitting, output only atomic evidence queries. Do NOT also include the original umbrella comparison query.
-7. NEVER output duplicate or paraphrased versions of the same query. Each sub-query must seek DIFFERENT evidence.
-8. When splitting, preserve all entity names and context in each sub-query. No dangling pronouns.
-9. Preserve the user's language.
+1. Default to one string: output the original query unchanged.
+2. Split ONLY when the query asks for independent evidence that is likely found in different sources.
+3. Split named-entity comparisons only when two or more specific entities are named in the query. Generic groups such as "competitors", "other models", or "các đối thủ cùng phân khúc" are NOT named entities; keep those queries unchanged.
+4. When splitting, each sub-query must seek different source evidence. Do not include the original umbrella query, duplicates, or paraphrases.
+5. Do not create answer-seeking queries. The retriever should fetch evidence, not conclude, rank, judge, summarize, or decide which item is better.
+6. Preserve the user's language and exact wording for named entities, model names, benchmarks, metrics, settings, numbers, table names, and figure names.
+7. Do not create background or definition queries unless the user explicitly asks for definitions.
+8. Output at most 3 strings. If the query compares exactly two named entities and splitting is useful, output exactly 2 strings.
 
 EXAMPLES (DO NOT SPLIT - Output 1 string):
 Input: "How does the iPhone 15 Pro compare to the Galaxy S24 Ultra in battery life and camera quality?"
@@ -87,6 +92,14 @@ GENERATOR_PROMPT = """
 Respond in the same language as the user's question: Vietnamese for Vietnamese, English for English.
 
 Use only the provided documents. Start with the direct answer.
+
+Answer from the evidence, not about the evidence:
+- Extract the facts needed to answer the user and state them directly.
+- Do not make the source, citation, document title, figure, or table the subject of the answer unless the user explicitly asks where the information appears.
+- Do not write phrases like "Theo tài liệu...", "Theo citation...", "Hình [3] cho thấy...", "The document says...", "Document [2] states...", or "In citation [3]...".
+- Citations are only verification markers appended to factual claims. They are not the answer itself.
+- Prefer: "PagedAttention/vLLM improves serving throughput by 2-4x [2]."
+- Avoid: "Theo tài liệu [2], PagedAttention/vLLM improves throughput by 2-4x."
 
 Keep the answer concise:
 - Use one short paragraph for simple questions.
