@@ -1,19 +1,23 @@
-# To run this application, execute `python main.py` in your terminal.
-# Do not run `uvicorn main:app --reload` directly.
-import uvicorn
-from src.core.logger import setup_logging
-
+import asyncio
 import os
 
+import uvicorn
+
+from src.core.logger import setup_logging
+
+
 if __name__ == "__main__":
+    if os.name == "nt" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     setup_logging()
-    # Disable reload in production to save memory and CPU
+
     is_dev = os.getenv("ENVIRONMENT", "dev").lower() != "production"
-    
+
     uvicorn.run(
-        "src.api.main:app", 
-        host="0.0.0.0", 
-        port=8000, 
-        reload=is_dev, 
-        reload_dirs=["src", "static"] if is_dev else None
+        "src.api.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=is_dev,
+        reload_dirs=["src", "static"] if is_dev else None,
     )

@@ -2,59 +2,64 @@ llms:
   rag_generator:
     provider: groq
     model: meta-llama/llama-4-scout-17b-16e-instruct
-    temperature: 0.1
-    model_kwargs:
-      top_p: 0.95
-    max_retries: 3
-    # fallbacks:
-    #   - backup_generator
-
-  resolver:
-    provider: groq
-    model: meta-llama/llama-4-scout-17b-16e-instruct
-    temperature: 0.1
-    model_kwargs:
-      top_p: 0.9
-    max_retries: 2
-
-  decomposer:
-    provider: groq
-    model: llama-3.1-8b-instant
     temperature: 0.2
     model_kwargs:
       top_p: 0.95
-    max_retries: 2
+    max_retries: 0
+    fallbacks:
+      - large_model_fallback
+
+  resolver:
+    provider: groq
+    model: llama-3.1-8b-instant
+    temperature: 0.1
+    model_kwargs:
+      top_p: 0.9
+    max_retries: 0
+    fallbacks:
+      - small_model_fallback
+
+  decomposer:
+    provider: groq
+    model: gemini-2.5-flash-lite
+    temperature: 0.1
+    model_kwargs:
+      top_p: 0.9
+    max_retries: 0
+    fallbacks:
+      - small_model_fallback
 
   router:
     provider: groq
     model: llama-3.1-8b-instant
-    temperature: 0.1
+    temperature: 0.0
     model_kwargs:
-      top_p: 0.95
-    max_retries: 2
+      top_p: 0.9
+    max_retries: 0
+    fallbacks:
+      - small_model_fallback
 
   image_summarizer:
     provider: groq
     model: meta-llama/llama-4-scout-17b-16e-instruct
     temperature: 0.2
     model_kwargs:
-      top_p: 0.90
+      top_p: 0.9
     max_retries: 3
 
-  # Example local Ollama profile:
-  # rag_generator:
-  #   provider: ollama
-  #   model: llama3.1:8b
-  #   temperature: 0.1
-  #   model_kwargs:
-  #     base_url: http://host.docker.internal:11434
+  small_model_fallback:
+    provider: gemini
+    model: gemini-3.1-flash-lite
+    temperature: 0.1
+    model_kwargs:
+      top_p: 0.9
+    max_retries: 1
 
-  # Example local HuggingFace profile:
-  # rag_generator:
-  #   provider: huggingface
-  #   model: microsoft/Phi-3-mini-4k-instruct
-  #   temperature: 0.1
-  #   model_kwargs:
-  #     task: text-generation
-  #     pipeline_kwargs:
-  #       max_new_tokens: 512
+  large_model_fallback:
+    provider: gemini
+    model: gemma-4-26b-a4b-it
+    temperature: 0.1
+    model_kwargs:
+      top_p: 0.9
+      thinking_level: minimal
+    max_retries: 1

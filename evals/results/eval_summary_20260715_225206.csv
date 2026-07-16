@@ -1,0 +1,34 @@
+metric,score
+context_recall,0.9667
+context_precision,0.9434
+faithfulness,0.9192
+answer_relevancy,0.8345
+
+question_type,count,context_recall,context_precision,faithfulness,answer_relevancy
+comparison,5,0.8667,0.9000,0.8500,0.8631
+fact_retrieval,7,1.0000,1.0000,1.0000,0.7892
+multi_hop,3,1.0000,0.9381,0.9333,0.8475
+table_extraction,5,1.0000,0.9108,0.8667,0.8616
+
+per_sample_results
+user_input,question_type,latency_seconds,latency_ms,pipeline_latency_seconds,attempts,context_recall,context_precision,faithfulness,answer_relevancy
+What attention algorithm was introduced in the PagedAttention paper to improve KV cache memory management for LLM serving?,fact_retrieval,6.312,6312.31,6.312,1,1.0000,1.0000,1.0000,0.8807
+"On an NVIDIA A100 40GB serving a 13B model, roughly what percentage of memory is occupied by model parameters?",table_extraction,5.315,5315.12,5.315,1,1.0000,0.8875,1.0000,0.7408
+compare vLLM and traditional serving systems in terms of KV cache memory efficiency,comparison,5.009,5009.12,5.009,1,1.0000,1.0000,1.0000,0.9179
+"How many total parameters does DeepSeek-V3 have, and how many are activated per token?",fact_retrieval,5.386,5385.82,5.386,1,1.0000,1.0000,1.0000,0.8317
+"DeepSeek-V3 vs DeepSeek-V2.5 on MATH 500 accuracy, which one performed better and by how much",comparison,6.044,6043.73,6.044,1,0.3333,1.0000,0.2500,0.8999
+why does mistral 7b use gqa,fact_retrieval,5.142,5141.9,5.142,1,1.0000,1.0000,1.0000,0.4940
+Mistral 7B compared with Llama 2 13B how did it perform on evaluated benchmarks,comparison,8.21,8210.03,8.21,1,1.0000,1.0000,1.0000,0.9188
+Which license was Mistral 7B released under?,fact_retrieval,3.786,3785.56,3.786,1,1.0000,1.0000,1.0000,0.9552
+"In the GPT-4 judged Elo rankings on the Vicuna benchmark, what Elo score did Guanaco 65B achieve?",table_extraction,5.535,5534.99,5.535,1,1.0000,1.0000,1.0000,0.8989
+compare memory needed for finetuning a 65b model using regular 16-bit training versus qlora,comparison,5.85,5849.73,5.85,1,1.0000,1.0000,1.0000,0.8661
+"For someone building efficient LLM systems, which approach targets serving-time KV cache efficiency and which targets finetuning memory reduction: PagedAttention/vLLM or QLoRA?",multi_hop,6.11,6109.66,6.11,1,1.0000,0.8875,1.0000,0.7989
+What problem does PagedAttention specifically target in LLM serving systems?,fact_retrieval,3.961,3961.41,3.961,1,1.0000,1.0000,1.0000,0.8011
+"For LLM serving workloads, why is increasing batch size important according to the vLLM paper?",multi_hop,4.784,4783.63,4.784,1,1.0000,1.0000,0.8000,0.8953
+DeepSeek-V3 scored what percentile on Codeforces benchmarks?,table_extraction,6.341,6341.22,6.341,1,1.0000,1.0000,1.0000,0.9229
+Mistral 7B – Instruct was reported to outperform which chat model?,fact_retrieval,5.02,5020.13,5.02,1,1.0000,1.0000,1.0000,0.5875
+how much memory does guanaco 7b need when deployed,table_extraction,3.611,3611.34,3.611,1,1.0000,0.7500,1.0000,0.9692
+What Elo score did GPT-4 achieve in the Vicuna benchmark comparison used in the QLoRA paper?,table_extraction,5.324,5323.92,5.324,1,1.0000,0.9167,0.3333,0.7763
+how many different open-weight model sizes are available in qwen2.5,fact_retrieval,5.097,5096.87,5.097,1,1.0000,1.0000,1.0000,0.9740
+Qwen2.5-Turbo and Qwen2.5-Plus are compared against which OpenAI models in the report,comparison,5.819,5819.46,5.819,1,1.0000,0.5000,1.0000,0.7130
+A researcher wants efficient serving throughput for deployed LLMs and memory-efficient finetuning for a 65B model. Which technologies from the provided papers address those two goals?,multi_hop,7.693,7693.01,7.693,1,1.0000,0.9267,1.0000,0.8483

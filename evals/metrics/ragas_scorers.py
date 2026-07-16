@@ -1,10 +1,13 @@
 import os
 from ragas.metrics.collections import (
-    ContextRecall, ContextPrecision, Faithfulness, AnswerRelevancy,
+    ContextRecall,
+    ContextPrecisionWithReference,
+    Faithfulness,
+    AnswerRelevancy,
 )
-from ragas.llms import llm_factory
-from ragas.embeddings.base import embedding_factory
 from openai import AsyncOpenAI
+from ragas.llms.base import llm_factory
+from ragas.embeddings.base import embedding_factory
 
 from evals.utils.retry import eval_with_retry
 
@@ -14,9 +17,14 @@ class RagasEvaluators:
     def __init__(self, judge_model="gpt-4o-mini", embedding_model="text-embedding-3-small"):
         openai_client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
         eval_llm = llm_factory(judge_model, client=openai_client, max_tokens=8192)
-        eval_emb = embedding_factory("openai", model=embedding_model, client=openai_client)
+        eval_emb = embedding_factory(
+            "openai",
+            model=embedding_model,
+            client=openai_client,
+            interface="modern",
+        )
 
-        self.precision_scorer = ContextPrecision(llm=eval_llm)
+        self.precision_scorer = ContextPrecisionWithReference(llm=eval_llm)
         self.recall_scorer = ContextRecall(llm=eval_llm)
         self.faith_scorer = Faithfulness(llm=eval_llm)
         self.relevancy_scorer = AnswerRelevancy(llm=eval_llm, embeddings=eval_emb)

@@ -2,7 +2,6 @@ import asyncio
 import json
 import operator
 import re
-from functools import wraps
 from typing import Annotated, Any, Literal, TypedDict
 
 from langgraph.graph import StateGraph, END
@@ -14,53 +13,31 @@ from psycopg_pool import AsyncConnectionPool
 from src.core.config import get_settings
 from src.core.logger import get_logger
 from src.models.base import get_llm
-from src.components.reranker import get_reranker
 from src.components.retriever import retrieve, resolve_reranker_mode
-from src.components.image_utils import to_base64
 from src.core.weaviate_client import get_weaviate_client
 from src.prompts.prompts import (
     ROUTER_PROMPT,
     QUERY_RESOLVER_PROMPT,
     QUERY_DECOMPOSER_PROMPT,
-    GENERATOR_PROMPT,
+)
+from src.agentic_rag.utils import (
+    build_rag_messages,
+    format_retrieved_docs,
+    message_content_to_text,
+    rerank_k_for_retrieve,
+    select_final_retrieved_docs,
+    sse_event,
+    stream_event_to_sse,
+    trace_step,
 )
 
 from src.core.telemetry import get_current_trace_id
 from opentelemetry import trace
 
-try:
-    from openinference.semconv.trace import SpanAttributes
-
-    SPAN_KIND = SpanAttributes.OPENINFERENCE_SPAN_KIND
-except ImportError:
-    SPAN_KIND = "openinference.span.kind"
-
 logger = get_logger(__name__)
 tracer = trace.get_tracer(__name__)
 
 _RESOLVER_HISTORY_CHARS = 150
-def trace_step(name, kind="CHAIN"):
-    def decorator(func):
-        if asyncio.iscoroutinefunction(func):
-
-            @wraps(func)
-            async def async_wrapper(*args, **kwargs):
-                with tracer.start_as_current_span(name) as span:
-                    span.set_attribute(SPAN_KIND, kind)
-                    return await func(*args, **kwargs)
-
-            return async_wrapper
-        else:
-
-            @wraps(func)
-            def sync_wrapper(*args, **kwargs):
-                with tracer.start_as_current_span(name) as span:
-                    span.set_attribute(SPAN_KIND, kind)
-                    return func(*args, **kwargs)
-
-            return sync_wrapper
-
-    return decorator
 
 
 class AgentState(TypedDict):
@@ -169,7 +146,7 @@ class AgenticRAG:
 
         try:
             response = await self.llm_router.ainvoke(messages)
-            intention = response.content.strip().upper()
+            intention = message_content_to_text(response.content).strip().upper()
 
             if intention not in ["INFORMATION_REQUEST", "CONVERSATIONAL"]:
                 logger.warning(
@@ -224,7 +201,7 @@ class AgenticRAG:
 
         try:
             raw_response = await self.llm_resolver.ainvoke(messages)
-            resolved_query = raw_response.content.strip()
+            resolved_query = message_content_to_text(raw_response.content).strip()
             if not resolved_query:
                 logger.warning(
                     "LLM returned empty resolved query. Falling back to original query."
@@ -249,7 +226,7 @@ class AgenticRAG:
 
         try:
             raw_response = await self.llm_decomposer.ainvoke(messages)
-            text = raw_response.content.strip()
+            text = message_content_to_text(raw_response.content).strip()
 
             # Extract JSON array from response (handles extra text around it)
             match = re.search(r"\[.*\]", text, re.DOTALL)
@@ -284,7 +261,11 @@ class AgenticRAG:
         settings = get_settings()
         reranker_mode = resolve_reranker_mode(settings.reranker_mode)
         final_top_k = settings.retrieval_top_k_reranker
-        per_query_rerank_k = 0 if reranker_mode == "app" else final_top_k
+        per_query_rerank_k = rerank_k_for_retrieve(
+            len(queries),
+            final_top_k,
+            reranker_mode,
+        )
 
         # Single connection shared across all concurrent sub-queries
         client = get_weaviate_client()
@@ -296,7 +277,7 @@ class AgenticRAG:
                 collection_name=collection_name,
                 top_k=settings.retrieval_top_k,
                 top_k_reranker=per_query_rerank_k,
-                alpha=0.6,
+                alpha=settings.retrieval_alpha,
                 client=client,
             )
 
@@ -308,98 +289,17 @@ class AgenticRAG:
             logger.error(f"Retrieval failed: {e}")
             results_per_query = []
 
-        # Deduplicate across sub-queries, preserving order
-        all_docs = []
-        seen_ids: set = set()
-        for docs in results_per_query:
-            for doc in docs:
-                doc_id = str(doc.uuid)
-                if doc_id not in seen_ids:
-                    seen_ids.add(doc_id)
-                    all_docs.append(doc)
-
-        if not all_docs:
-            logger.warning(f"No documents retrieved for queries: {queries}")
-        else:
-            logger.info(f"Retrieved {len(all_docs)} unique documents")
-
         rerank_query = state.get("resolved_query", state.get("query", ""))
-        final_docs = self._finalize_retrieved_docs(
-            rerank_query,
-            all_docs,
-            reranker_mode,
-            final_top_k,
-            settings,
+        final_docs = select_final_retrieved_docs(
+            queries=queries,
+            results_per_query=results_per_query,
+            single_query=rerank_query,
+            reranker_mode=reranker_mode,
+            final_top_k=final_top_k,
+            settings=settings,
         )
 
         return {"retrieved_documents": final_docs}
-
-    @staticmethod
-    def _finalize_retrieved_docs(
-        query: str,
-        docs: list,
-        reranker_mode: str,
-        top_k: int,
-        settings,
-    ) -> list:
-        if not docs or top_k <= 0:
-            return docs
-        if reranker_mode == "app":
-            return get_reranker(settings).rerank(query, docs, top_k)
-        return docs[:top_k]
-
-    @staticmethod
-    def _source_ref(source: str, page_number: int | None) -> str:
-        if not page_number:
-            return source
-        return f"{source} (p.{page_number})"
-
-    def _document_text_part(self, index: int, props: dict) -> str:
-        doc_type = props.get("type", "").lower()
-        label = {"image": "IMAGE", "table": "TABLE"}.get(doc_type, "TEXT")
-        source_ref = self._source_ref(props.get("source", ""), props.get("page_number"))
-        text = props.get("text") or ("no description available" if doc_type == "image" else "")
-        return f"[{index}] [{label}]\nSource: {source_ref}\n{text}\n"
-
-    @staticmethod
-    def _text_only_content(content_blocks: list[dict]) -> str:
-        return "".join(
-            block["text"]
-            for block in content_blocks
-            if block.get("type") == "text"
-        )
-
-    def _build_rag_messages(self, query: str, retrieved_documents: list) -> list:
-        """Build the prompt messages for RAG generation (shared by generator and stream_generate)."""
-        has_images = False
-        content_blocks = [
-            {"type": "text", "text": "Documents: \n\n"},
-        ]
-
-        for i, doc in enumerate(retrieved_documents, 1):
-            props = doc.properties
-            text_part = self._document_text_part(i, props)
-            content_blocks.append({"type": "text", "text": text_part})
-
-            doc_type = props.get("type", "").lower()
-            if doc_type == "image":
-                image_path = props.get("image_path", "")
-                base64_img = to_base64(image_path)
-                if base64_img:
-                    has_images = True
-                    content_blocks.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{base64_img}"},
-                        }
-                    )
-
-            content_blocks.append({"type": "text", "text": "---\n\n"})
-
-        content_blocks.append({"type": "text", "text": f"Question:\n{query}"})
-
-        final_content = content_blocks if has_images else self._text_only_content(content_blocks)
-        return [SystemMessage(content=GENERATOR_PROMPT), HumanMessage(content=final_content)]
 
     @trace_step("rag_generator")
     async def rag_generator(self, state: AgentState) -> dict:
@@ -407,41 +307,17 @@ class AgenticRAG:
         query = state["query"]
         retrieved_documents = state["retrieved_documents"]
 
-        messages = self._build_rag_messages(query, retrieved_documents)
+        messages = build_rag_messages(query, retrieved_documents)
 
         response = await self.llm_rag.ainvoke(messages)
 
         # Attach retrieved documents to the response message so it persists in the state
-        formatted_docs = self._format_retrieved_docs(retrieved_documents)
+        formatted_docs = format_retrieved_docs(retrieved_documents)
         response.additional_kwargs["docs"] = formatted_docs
 
         logger.info(f"RAG response generated ({len(response.content)} chars)")
 
         return {"messages": [HumanMessage(content=query), response]}
-
-    def _format_retrieved_docs(self, docs: list) -> list:
-        """Extract and format retrieved documents from graph result."""
-        retrieved_docs = []
-        for doc in docs:
-            props = doc.properties if hasattr(doc, "properties") else doc
-
-            # Extract score from metadata if available
-            score = None
-            if hasattr(doc, "metadata") and doc.metadata:
-                score = getattr(doc.metadata, "score", None)
-
-            retrieved_docs.append(
-                {
-                    "text": props.get("text", ""),
-                    "source": props.get("source", ""),
-                    "page_number": props.get("page_number", 0),
-                    "section": props.get("section", ""),
-                    "type": props.get("type", ""),
-                    "image_path": props.get("image_path", ""),
-                    "score": score,
-                }
-            )
-        return retrieved_docs
 
     async def chat(
         self, collection_name: str, message: str, session_id: str = "default"
@@ -466,7 +342,7 @@ class AgenticRAG:
         docs = result.get("retrieved_documents", [])
         return {
             "response": response_text,
-            "retrieved_documents": self._format_retrieved_docs(docs),
+            "retrieved_documents": format_retrieved_docs(docs),
         }
 
     async def stream_chat(
@@ -490,36 +366,15 @@ class AgenticRAG:
                     config=config,
                     version="v2",
                 ):
-                    sse = self._stream_event_to_sse(event)
+                    sse = stream_event_to_sse(event)
                     if sse:
                         yield sse
 
-                yield self._sse_event("done", trace_id=trace_id)
+                yield sse_event("done", trace_id=trace_id)
 
         except Exception as e:
             logger.error(f"Streaming failed: {e}")
-            yield self._sse_event("error", message=str(e))
-
-    @staticmethod
-    def _sse_event(event_type: str, **payload) -> str:
-        return f"data: {json.dumps({'type': event_type, **payload})}\n\n"
-
-    def _stream_event_to_sse(self, event: dict) -> str | None:
-        kind = event["event"]
-
-        if kind == "on_chain_end" and event["name"] == "retriever":
-            docs = event["data"]["output"].get("retrieved_documents", [])
-            formatted_docs = self._format_retrieved_docs(docs)
-            return self._sse_event("docs", documents=formatted_docs)
-
-        if kind == "on_chat_model_stream":
-            node_name = event.get("metadata", {}).get("langgraph_node")
-            if node_name in ("rag_generator", "conversational_llm"):
-                chunk_content = event["data"]["chunk"].content
-                if chunk_content:
-                    return self._sse_event("chunk", text=chunk_content)
-
-        return None
+            yield sse_event("error", message=str(e))
 
     async def get_history(
         self, collection_name: str, session_id: str = "default"

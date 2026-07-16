@@ -69,13 +69,3 @@ LICENSE
 AGENTS.md
 .agents/
 .codex/
-
-# Scripts
-start.bat
-start.sh
-
-# Redundant Requirements
-requirements.txt
-requirements-dev.txt
-requirements.lock
-constraints.txt

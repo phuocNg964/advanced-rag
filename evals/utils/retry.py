@@ -9,6 +9,11 @@ async def eval_with_retry(func, max_retries=5, **kwargs):
     for attempt in range(max_retries):
         try:
             result = await func(**kwargs)
+            if isinstance(result, (int, float)):
+                val = float(result)
+                if not math.isnan(val):
+                    return round(val, 4)
+                return None
             val = getattr(result, 'value', None)
             if val is None:
                 try:

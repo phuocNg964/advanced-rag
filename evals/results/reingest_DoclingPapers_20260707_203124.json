@@ -1,0 +1,217 @@
+{
+  "metadata": {
+    "target_collection": "DoclingPapers",
+    "source_dir": "data\\raw\\Papers",
+    "base_url": "http://127.0.0.1:8000",
+    "timestamp": "20260707_203124",
+    "poll_seconds": 10,
+    "keep_existing": false
+  },
+  "deleted_documents": [],
+  "documents": [
+    {
+      "filename": "Attention is all you need.pdf",
+      "source": "DoclingPapers/Attention is all you need.pdf",
+      "file_size_bytes": 2215244,
+      "page_count": 15,
+      "job_id": "113f3708-e261-4b26-b905-2e74fa47beae",
+      "status": "completed",
+      "message": "Successfully ingested Attention is all you need.pdf",
+      "trace_id": "5f300fce0ae26c4729b367b325ca2c21",
+      "warnings": [],
+      "latency_seconds": 60.519,
+      "chunk_stats": {
+        "chunk_count": 62,
+        "text_chunks": 53,
+        "table_chunks": 4,
+        "image_chunks": 5
+      },
+      "span_stats": {
+        "preprocess_documents": 38.934,
+        "read_pdf": 34.883,
+        "ingest_pipeline": 53.381,
+        "add_documents": 14.446,
+        "summarize_all_images": 4.043,
+        "summarize_single_image_count": 5,
+        "summarize_single_image_total_seconds": 9.727,
+        "summarize_single_image_max_seconds": 2.117
+      }
+    },
+    {
+      "filename": "BM17_Tóm tắt báo cáo_Tr05.pdf",
+      "source": "DoclingPapers/BM17_Tóm tắt báo cáo_Tr05.pdf",
+      "file_size_bytes": 902631,
+      "page_count": 9,
+      "job_id": "b24ffebf-358b-4fbd-a05e-e694224914dd",
+      "status": "completed",
+      "message": "Successfully ingested BM17_Tóm tắt báo cáo_Tr05.pdf",
+      "trace_id": "fcf7cae944a9c64faa026cd56d440dc7",
+      "warnings": [],
+      "latency_seconds": 30.736,
+      "chunk_stats": {
+        "chunk_count": 17,
+        "text_chunks": 11,
+        "table_chunks": 0,
+        "image_chunks": 6
+      },
+      "span_stats": {
+        "preprocess_documents": 22.033,
+        "read_pdf": 12.785,
+        "summarize_all_images": 9.242,
+        "summarize_single_image_count": 6,
+        "summarize_single_image_total_seconds": 20.833,
+        "summarize_single_image_max_seconds": 6.278
+      }
+    },
+    {
+      "filename": "DeepSeek-V3 Technical Report.pdf",
+      "source": "DoclingPapers/DeepSeek-V3 Technical Report.pdf",
+      "file_size_bytes": 1887366,
+      "page_count": 53,
+      "job_id": "4dce7e25-6fd0-4efe-8eaa-69cd36786c33",
+      "status": "completed",
+      "message": "Successfully ingested DeepSeek-V3 Technical Report.pdf",
+      "trace_id": "f94974aec6f48b5988942ca9d1efdb10",
+      "warnings": [],
+      "latency_seconds": 170.761,
+      "chunk_stats": {
+        "chunk_count": 210,
+        "text_chunks": 188,
+        "table_chunks": 12,
+        "image_chunks": 10
+      },
+      "span_stats": {
+        "preprocess_documents": 91.907,
+        "read_pdf": 80.626,
+        "ingest_pipeline": 166.194,
+        "add_documents": 74.285,
+        "summarize_all_images": 11.242,
+        "summarize_single_image_count": 10,
+        "summarize_single_image_total_seconds": 20.451,
+        "summarize_single_image_max_seconds": 6.714
+      }
+    },
+    {
+      "filename": "Efficient Memory Management for Large Language.pdf",
+      "source": "DoclingPapers/Efficient Memory Management for Large Language.pdf",
+      "file_size_bytes": 1459631,
+      "page_count": 16,
+      "job_id": "94838629-d51d-4ca2-a0ba-5d27962996fd",
+      "status": "completed",
+      "message": "Successfully ingested Efficient Memory Management for Large Language.pdf",
+      "trace_id": "1ea6ad61e78712f4d3f22642109dbd48",
+      "warnings": [],
+      "latency_seconds": 110.698,
+      "chunk_stats": {
+        "chunk_count": 127,
+        "text_chunks": 108,
+        "table_chunks": 1,
+        "image_chunks": 18
+      },
+      "span_stats": {
+        "preprocess_documents": 80.52,
+        "read_pdf": 23.503,
+        "ingest_pipeline": 107.909,
+        "add_documents": 27.387,
+        "summarize_all_images": 56.997,
+        "summarize_single_image_count": 18,
+        "summarize_single_image_total_seconds": 152.777,
+        "summarize_single_image_max_seconds": 36.14
+      }
+    },
+    {
+      "filename": "Mistral 7B.pdf",
+      "source": "DoclingPapers/Mistral 7B.pdf",
+      "file_size_bytes": 3749788,
+      "page_count": 9,
+      "job_id": "c3683eca-aff0-466c-b11d-688f2e52ad42",
+      "status": "completed",
+      "message": "Successfully ingested Mistral 7B.pdf",
+      "trace_id": "b3c33c39e920086c0baa9fc0124df18c",
+      "warnings": [],
+      "latency_seconds": 40.378,
+      "chunk_stats": {
+        "chunk_count": 39,
+        "text_chunks": 28,
+        "table_chunks": 5,
+        "image_chunks": 6
+      },
+      "span_stats": {
+        "preprocess_documents": 25.208,
+        "read_pdf": 21.019,
+        "ingest_pipeline": 40.122,
+        "add_documents": 14.913,
+        "summarize_all_images": 4.18,
+        "summarize_single_image_count": 6,
+        "summarize_single_image_total_seconds": 11.499,
+        "summarize_single_image_max_seconds": 2.278
+      }
+    },
+    {
+      "filename": "QLORA.pdf",
+      "source": "DoclingPapers/QLORA.pdf",
+      "file_size_bytes": 1065470,
+      "page_count": 26,
+      "job_id": "b475e61c-f917-412a-bedb-790856f6f862",
+      "status": "completed",
+      "message": "Successfully ingested QLORA.pdf",
+      "trace_id": "ecc60203bcd773ca7b0383a803492b49",
+      "warnings": [],
+      "latency_seconds": 90.455,
+      "chunk_stats": {
+        "chunk_count": 127,
+        "text_chunks": 108,
+        "table_chunks": 13,
+        "image_chunks": 6
+      },
+      "span_stats": {
+        "preprocess_documents": 55.637,
+        "read_pdf": 52.54,
+        "ingest_pipeline": 86.731,
+        "add_documents": 31.094,
+        "summarize_all_images": 3.084,
+        "summarize_single_image_count": 6,
+        "summarize_single_image_total_seconds": 7.464,
+        "summarize_single_image_max_seconds": 2.127
+      }
+    },
+    {
+      "filename": "Qwen2.5 Technical Report.pdf",
+      "source": "DoclingPapers/Qwen2.5 Technical Report.pdf",
+      "file_size_bytes": 1938604,
+      "page_count": 26,
+      "job_id": "6e1eeeda-8766-4154-9f42-0342c6aa7985",
+      "status": "completed",
+      "message": "Successfully ingested Qwen2.5 Technical Report.pdf",
+      "trace_id": "2e7e3907ddd4c9417eb8b58beca851ae",
+      "warnings": [],
+      "latency_seconds": 150.664,
+      "chunk_stats": {
+        "chunk_count": 134,
+        "text_chunks": 114,
+        "table_chunks": 17,
+        "image_chunks": 3
+      },
+      "span_stats": {
+        "preprocess_documents": 101.134,
+        "read_pdf": 98.861,
+        "ingest_pipeline": 146.95,
+        "add_documents": 45.815,
+        "summarize_all_images": 2.255,
+        "summarize_single_image_count": 3,
+        "summarize_single_image_total_seconds": 5.795,
+        "summarize_single_image_max_seconds": 2.252
+      }
+    }
+  ],
+  "summary": {
+    "document_count": 7,
+    "completed_count": 7,
+    "failed_count": 0,
+    "total_latency_seconds": 715.817,
+    "total_pages": 154,
+    "total_chunks": 716,
+    "latency_seconds_per_page": 4.648,
+    "add_documents_total_seconds": 207.94
+  }
+}

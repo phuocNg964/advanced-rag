@@ -1,0 +1,18 @@
+---
+# GPU override. Use with:
+# docker compose -f docker-compose.yaml -f docker-compose.gpu.yaml --profile gpu up -d
+#
+# The default compose file starts CPU embedding inference. This override moves
+# that CPU service behind an inactive profile so the GPU service owns the
+# text2vec-transformers network alias.
+services:
+  weaviate:
+    environment:
+      ENABLE_MODULES: "reranker-transformers,text2vec-transformers"
+
+  text2vec-transformers-cpu:
+    profiles: ["cpu-disabled-for-gpu"]
+
+  api:
+    environment:
+      - RERANKER_MODE=weaviate

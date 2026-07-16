@@ -139,5 +139,28 @@ def save_results(
                 [qtype, scores["count"]] +
                 [f"{scores[col]:.4f}" if scores.get(col) is not None else "N/A" for col in metric_cols]
             )
+        writer.writerow([])
+        sample_cols = [
+            "user_input",
+            "question_type",
+            "latency_seconds",
+            "latency_ms",
+            "pipeline_latency_seconds",
+            "attempts",
+        ] + metric_cols
+        writer.writerow(["per_sample_results"])
+        writer.writerow(sample_cols)
+        for item in task_results:
+            writer.writerow([
+                item.get("user_input", ""),
+                item.get("question_type", ""),
+                item.get("latency_seconds", ""),
+                item.get("latency_ms", ""),
+                item.get("pipeline_latency_seconds", ""),
+                item.get("attempts", ""),
+            ] + [
+                f"{item[col]:.4f}" if item.get(col) is not None else "N/A"
+                for col in metric_cols
+            ])
 
     return json_path, csv_path, aggregate, per_type_scores
